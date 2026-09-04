@@ -232,7 +232,7 @@ Simple, bounded to `[0, 1]`, and computed only from games that count officially 
 
 ## 6. Database Design
 
-SQLite: a single file, zero setup, comfortably fast for the write/read volumes here (thousands of rows per run, not millions), and trivially portable to Postgres later if you ever want a multi-machine setup. (Plain `sqlite3` or an ORM like SQLAlchemy on top are both fine — SQLAlchemy buys nicer models and easier schema changes later, at the cost of one more dependency.)
+SQLite via plain `sqlite3` (stdlib, no ORM): a single file, zero setup, comfortably fast for the write/read volumes here (thousands of rows per run, not millions), and trivially portable to Postgres later if you ever want a multi-machine setup.
 
 ### `agents`
 
@@ -313,8 +313,8 @@ connect4/
 │       │   ├── reproduction.py      # crossover + mutation operators
 │       │   └── benchmarks.py        # random-mover & heuristic bots, benchmark runner (§5)
 │       ├── storage/
-│       │   ├── schema.py            # table definitions (§6)
-│       │   └── repository.py        # all reads/writes to SQLite
+│       │   ├── schema.py            # table definitions (§6), sqlite3 stdlib
+│       │   └── repository.py        # agent/game CRUD, snapshot insert/read; benchmark_results CRUD deferred to Phase 6
 │       ├── interface/
 │       │   └── play_cli.py          # human vs. saved agent (§8)
 │       ├── analytics/
@@ -325,7 +325,11 @@ connect4/
 │   ├── test_connect_four.py
 │   ├── test_bots.py
 │   ├── test_match.py
+│   ├── test_network.py
 │   ├── test_genome.py
+│   ├── test_agent.py
+│   ├── test_schema.py
+│   ├── test_repository.py
 │   └── test_population.py
 └── data/
     └── evoconnect4.db            # created at runtime
@@ -336,7 +340,7 @@ connect4/
 | Package & dependency management | `uv` | Fast resolver/installer that can also provision the Python interpreter itself; manages `pyproject.toml` + `uv.lock` |
 | Neural network math | `numpy` | Weights are just arrays; reshaping a flat genome vector into weight matrices is trivial, and nothing here needs autograd since nothing is trained by gradient |
 | Game logic | Plain Python | Simple enough that a dependency would be overkill |
-| Database | `sqlite3` (stdlib) or SQLAlchemy | Zero setup either way; SQLAlchemy adds convenience if the schema grows |
+| Database | `sqlite3` (stdlib) | No new dependency |
 | Config | `config.yaml` + a typed loader (`config.py`) | Tunables from §10 live in a human-editable file; the loader parses them into a typed dataclass so consuming code gets autocomplete/type-checking |
 | Analytics | `matplotlib` (+ `pandas` optional) | Standard, simple, enough for the charts in §9 |
 | Human CLI | `input()` / `print()` (stdlib) | Keeps the human interface as plain as the game itself |
@@ -404,7 +408,7 @@ A Jupyter notebook or a couple of standalone scripts are both fine for the MVP; 
 | 0 — Scaffolding | Repo layout, config module, dependencies | Entry point runs end-to-end with stub logic |
 | 1 — Game engine | Board, legal moves, win/draw detection, plus deterministic bots (random mover, heuristic bot) and a match runner pulled forward from Phase 6 as pure logic, with nothing structural (DB, population) attached | Unit tests cover all 4 win directions, draws, illegal moves |
 | 2 — Agent & genome | NN forward pass, genome encode/decode, random init | Round-trip test: genome → network → identical weight vector back |
-| 3 — Database | Schema, agent/game CRUD, snapshot writer | Insert a fake agent + game, read both back correctly |
+| 3 — Database | Schema (all 4 tables), full agent/game CRUD, snapshot insert/read; `benchmark_results` schema only, CRUD deferred to Phase 6 | Insert a fake agent + game, read both back correctly |
 | 4 — Evolution core | Mutation, crossover, reproduction timing, death, population cap | 50-tick run on a small population shows plausible births/deaths, no runaway size |
 | 5 — Full integration | Wire everything into `run_simulation.py` | Multi-hundred-tick run completes with no crashes, DB fills in as expected |
 | 6 — Baseline benchmarking | Scheduled evaluation of the population's current-best agent against Phase 1's bots, writing to `benchmark_results` | `benchmark_results` shows a visible trend over ticks |
