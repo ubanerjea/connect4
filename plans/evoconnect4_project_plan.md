@@ -198,6 +198,19 @@ Left alone, fitness-driven reproduction could grow the population indefinitely. 
 
 Each tick, the alive population is shuffled and paired up sequentially (an odd one out sits that tick out). Because Connect Four has a known first-player edge, each matched pair plays **two** games per tick — one with each agent moving first — so a pair's results reflect who played better, not just who happened to go first.
 
+### 4.7 Senescence: a cost for longevity (planned, Phase 4 — not yet built)
+
+As designed so far, `lifespan` is a purely dominant trait with no offsetting cost: a longer-lived agent gets strictly more ticks to hit `reproduction_interval(fitness)` repeatedly (§4.3) and strictly more chances to be sampled as a tournament-selection parent (§3.3), independent of whether its network is actually any good at Connect Four. Left alone, this is expected to pull the population toward maximum lifespan regardless of playing skill — exactly the "lifespan could pin at its ceiling" risk flagged in §14. The fix decided on (but not yet implemented — this belongs to Phase 4's evolution core, not Phase 2's agent/genome work) is **somatic mutation**, distinct from the germline mutation already in §3.2:
+
+- **Germline mutation** (§3.2, existing): happens only at reproduction, perturbs the *genome*, and is inherited by offspring.
+- **Somatic mutation** (new): happens continuously during an agent's own life, perturbs only its *live, in-play weights* — a copy, separate from the stored genome — and is **never inherited**. The biological parallel is exact, not just a loose metaphor: somatic mutations accumulate in an organism's body over its life (it's literally why cancer risk rises with age) without ever reaching the germ line.
+
+Mechanically: once an agent passes some fraction of its own `lifespan` (a threshold), its live weights start accumulating Gaussian noise — reusing the same weight-mutation math §3.2 already defines, just applied to a live copy instead of producing a new genome — with the rate/magnitude accelerating the further past that threshold the agent gets. Because these mutations are undirected (no gradient or fitness feedback informs them, per §3.1's "no backpropagation, ever"), and because random perturbation in a ~1,200-dimensional weight space is overwhelmingly more likely to degrade task performance than improve it absent such guidance, this reliably produces decay, not a random walk in either direction.
+
+This closes the loop through mechanics the plan already has, with no new machinery: since fitness is a win-rate over *all* games played (§5), degraded late-life performance drags an agent's own fitness down, which lengthens its `reproduction_interval` (§4.3) and makes it a more likely culling target (§4.5) — so a long lifespan now comes with rising risk, not a free lunch.
+
+`Agent` (Phase 2) intentionally does **not** carry this — it stays a minimal genome + network + move-chooser wrapper. Implementing this requires `Agent` (or whatever Phase 4 introduces) to hold mutable live weights distinct from the immutable genome, plus the tick-loop logic to trigger and scale the drift by age. That's Phase 4's responsibility when it builds the evolution core.
+
 ---
 
 ## 5. Fitness Function
@@ -425,7 +438,7 @@ A Jupyter notebook or a couple of standalone scripts are both fine for the MVP; 
 ## 14. Risks & Things to Watch
 
 - **Co-evolutionary blind spots**: fitness measured only against current population-mates can drift or cycle without genuine improvement (the "Red Queen" effect) — exactly why §5 recommends fixed-baseline benchmarking as the real progress signal.
-- **Gene collapse or runaway**: `mutation_rate` could self-adapt toward its floor (the population stops exploring) or `lifespan` could pin at its ceiling (one lineage dominates for a long stretch) — watch gene-value trends in `population_snapshots` (§9) to catch this early.
+- **Gene collapse or runaway**: `mutation_rate` could self-adapt toward its floor (the population stops exploring) — watch gene-value trends in `population_snapshots` (§9) to catch this early. `lifespan` pinning at its ceiling is the same class of risk, but has a planned structural mitigation rather than just monitoring — see §4.7's somatic-mutation/senescence design.
 - **Diversity loss**: 100 agents is plenty for a toy project but can still bottleneck; fresh-blood injection or niching (§13) are the fixes if fitness plateaus early alongside low genome variance.
 - **First-move advantage**: Connect Four's known first-player edge could bias fitness toward "who moved first" rather than "who played better" if left unchecked — mitigated in §4.6 by playing both orderings per matched pair.
 - **Pure-Python performance ceiling**: fine at the scale in §10, but if population size or tick count grows substantially, batch DB commits and a vectorized `numpy` forward pass are the first things to optimize before anything structural.

@@ -7,7 +7,7 @@ board_rows: 6
 hidden_layer_sizes: [24]
 weight_init_std: 0.5
 
-lifespan_range: [30, 200]
+lifespan_range: [50, 150]
 lifespan_mutation_scale: 0.10
 
 mutation_rate_range: [0.01, 0.5]
