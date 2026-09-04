@@ -289,7 +289,8 @@ connect4/
 │       ├── config.py             # typed Config dataclass + config.yaml loader
 │       ├── game/
 │       │   ├── connect_four.py      # board state, legal moves, win detection -- pure logic, no I/O
-│       │   └── match.py             # plays one full game between two move-choosing agents
+│       │   ├── bots.py              # deterministic move-choosers: random mover, heuristic bot (§5)
+│       │   └── match.py             # plays one full game between two move-choosing strategies
 │       ├── agent/
 │       │   ├── network.py           # feedforward NN: build from a flat weight vector, forward pass
 │       │   ├── genome.py            # random init, encode/decode, mutate, crossover (§3)
@@ -309,6 +310,8 @@ connect4/
 ├── tests/
 │   ├── test_config.py
 │   ├── test_connect_four.py
+│   ├── test_bots.py
+│   ├── test_match.py
 │   ├── test_genome.py
 │   └── test_population.py
 └── data/
@@ -386,12 +389,12 @@ A Jupyter notebook or a couple of standalone scripts are both fine for the MVP; 
 | Phase | Goal | Done when |
 |---|---|---|
 | 0 — Scaffolding | Repo layout, config module, dependencies | Entry point runs end-to-end with stub logic |
-| 1 — Game engine | Board, legal moves, win/draw detection | Unit tests cover all 4 win directions, draws, illegal moves |
+| 1 — Game engine | Board, legal moves, win/draw detection, plus deterministic bots (random mover, heuristic bot) and a match runner pulled forward from Phase 6 as pure logic, with nothing structural (DB, population) attached | Unit tests cover all 4 win directions, draws, illegal moves |
 | 2 — Agent & genome | NN forward pass, genome encode/decode, random init | Round-trip test: genome → network → identical weight vector back |
 | 3 — Database | Schema, agent/game CRUD, snapshot writer | Insert a fake agent + game, read both back correctly |
 | 4 — Evolution core | Mutation, crossover, reproduction timing, death, population cap | 50-tick run on a small population shows plausible births/deaths, no runaway size |
 | 5 — Full integration | Wire everything into `run_simulation.py` | Multi-hundred-tick run completes with no crashes, DB fills in as expected |
-| 6 — Baseline benchmarking | Random-mover & heuristic bots, scheduled runs | `benchmark_results` shows a visible trend over ticks |
+| 6 — Baseline benchmarking | Scheduled evaluation of the population's current-best agent against Phase 1's bots, writing to `benchmark_results` | `benchmark_results` shows a visible trend over ticks |
 | 7 — Analytics | Plotting scripts against the DB | Charts in §9 generate from a completed run |
 | 8 — Human play | CLI loading a saved agent | You can play a full game against the current best agent, start to finish |
 
