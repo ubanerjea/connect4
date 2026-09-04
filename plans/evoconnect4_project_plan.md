@@ -279,31 +279,35 @@ SQLite: a single file, zero setup, comfortably fast for the write/read volumes h
 ## 7. Software Architecture & Project Structure
 
 ```
-evoconnect4/
+connect4/
 ├── README.md
-├── requirements.txt
-├── config.py                    # every tunable parameter from §10, in one place
-├── evoconnect4/
-│   ├── game/
-│   │   ├── connect_four.py      # board state, legal moves, win detection -- pure logic, no I/O
-│   │   └── match.py             # plays one full game between two move-choosing agents
-│   ├── agent/
-│   │   ├── network.py           # feedforward NN: build from a flat weight vector, forward pass
-│   │   ├── genome.py            # random init, encode/decode, mutate, crossover (§3)
-│   │   └── agent.py             # wraps a genome + network + live stats
-│   ├── evolution/
-│   │   ├── population.py        # the live pool; runs one tick (§4.2)
-│   │   ├── reproduction.py      # crossover + mutation operators
-│   │   └── benchmarks.py        # random-mover & heuristic bots, benchmark runner (§5)
-│   ├── storage/
-│   │   ├── schema.py            # table definitions (§6)
-│   │   └── repository.py        # all reads/writes to SQLite
-│   ├── interface/
-│   │   └── play_cli.py          # human vs. saved agent (§8)
-│   ├── analytics/
-│   │   └── plots.py             # charts from the DB (§9)
-│   └── run_simulation.py        # entry point for a headless evolutionary run
+├── pyproject.toml               # uv-managed project metadata & dependencies
+├── uv.lock
+├── config.yaml                  # every tunable parameter from §10, in one place
+├── src/
+│   └── evoconnect4/
+│       ├── config.py             # typed Config dataclass + config.yaml loader
+│       ├── game/
+│       │   ├── connect_four.py      # board state, legal moves, win detection -- pure logic, no I/O
+│       │   └── match.py             # plays one full game between two move-choosing agents
+│       ├── agent/
+│       │   ├── network.py           # feedforward NN: build from a flat weight vector, forward pass
+│       │   ├── genome.py            # random init, encode/decode, mutate, crossover (§3)
+│       │   └── agent.py             # wraps a genome + network + live stats
+│       ├── evolution/
+│       │   ├── population.py        # the live pool; runs one tick (§4.2)
+│       │   ├── reproduction.py      # crossover + mutation operators
+│       │   └── benchmarks.py        # random-mover & heuristic bots, benchmark runner (§5)
+│       ├── storage/
+│       │   ├── schema.py            # table definitions (§6)
+│       │   └── repository.py        # all reads/writes to SQLite
+│       ├── interface/
+│       │   └── play_cli.py          # human vs. saved agent (§8)
+│       ├── analytics/
+│       │   └── plots.py             # charts from the DB (§9)
+│       └── run_simulation.py        # entry point for a headless evolutionary run
 ├── tests/
+│   ├── test_config.py
 │   ├── test_connect_four.py
 │   ├── test_genome.py
 │   └── test_population.py
@@ -313,10 +317,11 @@ evoconnect4/
 
 | Purpose | Recommended | Why |
 |---|---|---|
+| Package & dependency management | `uv` | Fast resolver/installer that can also provision the Python interpreter itself; manages `pyproject.toml` + `uv.lock` |
 | Neural network math | `numpy` | Weights are just arrays; reshaping a flat genome vector into weight matrices is trivial, and nothing here needs autograd since nothing is trained by gradient |
 | Game logic | Plain Python | Simple enough that a dependency would be overkill |
 | Database | `sqlite3` (stdlib) or SQLAlchemy | Zero setup either way; SQLAlchemy adds convenience if the schema grows |
-| Config | A single `config.py` (or YAML) | One place to tune everything in §10 |
+| Config | `config.yaml` + a typed loader (`config.py`) | Tunables from §10 live in a human-editable file; the loader parses them into a typed dataclass so consuming code gets autocomplete/type-checking |
 | Analytics | `matplotlib` (+ `pandas` optional) | Standard, simple, enough for the charts in §9 |
 | Human CLI | `input()` / `print()` (stdlib) | Keeps the human interface as plain as the game itself |
 

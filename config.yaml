@@ -1,0 +1,29 @@
+# EvoConnect4 configuration — tunable defaults from plan §10.
+population_size: 100
+
+board_columns: 7
+board_rows: 6
+
+hidden_layer_sizes: [24]
+weight_init_std: 0.5
+
+lifespan_range: [30, 200]
+lifespan_mutation_scale: 0.10
+
+mutation_rate_range: [0.01, 0.5]
+mutation_rate_tau: 0.15
+
+crossover_rate_range: [0.0, 1.0]
+crossover_rate_mutation_std: 0.05
+
+tournament_size: 5
+
+reproduction_interval_min: 8
+reproduction_interval_max: 25
+
+games_per_pair_per_tick: 2
+
+benchmark_every_n_ticks: 10
+benchmark_games_per_opponent: 20
+
+random_seed: 42
