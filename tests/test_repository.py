@@ -264,3 +264,112 @@ def test_get_latest_snapshot_returns_highest_tick():
 def test_get_latest_snapshot_returns_none_when_empty():
     repo = _repo()
     assert repo.get_latest_snapshot() is None
+
+
+# -- 6.1 parent_avg_fitness round trip --------------------------------------
+
+
+def test_insert_agent_round_trips_parent_avg_fitness():
+    repo = _repo()
+    agent_id = _insert_agent(repo, parent_avg_fitness=0.73)
+    record = repo.get_agent(agent_id)
+    assert record["parent_avg_fitness"] == 0.73
+
+
+def test_insert_agent_defaults_parent_avg_fitness_to_zero():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+    record = repo.get_agent(agent_id)
+    assert record["parent_avg_fitness"] == 0.0
+
+
+# -- 6.2 simulation_config round trip ----------------------------------------
+
+
+def test_insert_simulation_config_round_trips():
+    repo = _repo()
+    repo.insert_simulation_config(
+        simulation_id="sim-abc",
+        board_columns=7,
+        board_rows=6,
+        hidden_layer_sizes=[24],
+        weight_init_std=0.5,
+    )
+    record = repo.get_simulation_config()
+
+    assert record["simulation_id"] == "sim-abc"
+    assert record["board_columns"] == 7
+    assert record["board_rows"] == 6
+    assert record["hidden_layer_sizes"] == [24]
+    assert record["weight_init_std"] == 0.5
+
+
+def test_get_simulation_config_returns_none_when_empty():
+    repo = _repo()
+    assert repo.get_simulation_config() is None
+
+
+# -- 6.3 simulation_config_history -------------------------------------------
+
+
+def _history_kwargs(**overrides) -> dict:
+    fields = dict(
+        tick=0,
+        population_size=100,
+        lifespan_range=(50, 150),
+        lifespan_mutation_scale=0.1,
+        mutation_rate_range=(0.01, 0.5),
+        mutation_rate_tau=0.15,
+        crossover_rate_range=(0.0, 1.0),
+        crossover_rate_mutation_std=0.05,
+        tournament_size=5,
+        reproduction_interval_min=8,
+        reproduction_interval_max=25,
+        games_per_pair_per_tick=2,
+        benchmark_every_n_ticks=10,
+        benchmark_games_per_opponent=20,
+        random_seed=42,
+        cull_fraction_range=(0.1, 0.5),
+        cull_fraction_beta_a=1.0,
+        cull_fraction_beta_b=1.0,
+        cull_allow_immature_offspring=False,
+    )
+    fields.update(overrides)
+    return fields
+
+
+def test_effective_config_at_tick_returns_initial_row():
+    repo = _repo()
+    repo.insert_simulation_config_history_row(**_history_kwargs(tick=0, tournament_size=5))
+
+    record = repo.get_effective_config_at_tick(100)
+    assert record["tournament_size"] == 5
+    assert record["lifespan_range"] == (50, 150)
+    assert record["cull_allow_immature_offspring"] is False
+
+
+def test_effective_config_at_tick_ignores_later_rows_for_earlier_ticks():
+    repo = _repo()
+    repo.insert_simulation_config_history_row(**_history_kwargs(tick=0, tournament_size=5))
+    repo.insert_simulation_config_history_row(**_history_kwargs(tick=250, tournament_size=8))
+
+    assert repo.get_effective_config_at_tick(100)["tournament_size"] == 5
+    assert repo.get_effective_config_at_tick(300)["tournament_size"] == 8
+
+
+# -- 6.4 simulation_state upsert ---------------------------------------------
+
+
+def test_simulation_state_upsert_keeps_only_latest_values():
+    repo = _repo()
+    repo.upsert_simulation_state(current_tick=5, rng_state='{"a": 1}')
+    repo.upsert_simulation_state(current_tick=6, rng_state='{"a": 2}')
+
+    record = repo.get_simulation_state()
+    assert record["current_tick"] == 6
+    assert record["rng_state"] == '{"a": 2}'
+
+
+def test_get_simulation_state_returns_none_when_empty():
+    repo = _repo()
+    assert repo.get_simulation_state() is None

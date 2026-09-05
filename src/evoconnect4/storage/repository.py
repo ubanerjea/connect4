@@ -68,6 +68,7 @@ class Repository:
         offspring_count: int = 0,
         death_tick: int | None = None,
         death_cause: str | None = None,
+        parent_avg_fitness: float = 0.0,
     ) -> int:
         cursor = self.conn.execute(
             """
@@ -75,8 +76,9 @@ class Repository:
                 parent1_id, parent2_id, generation, birth_tick, death_tick,
                 status, death_cause, nn_weights, nn_architecture, lifespan,
                 mutation_rate, crossover_rate, games_played, wins, losses,
-                draws, fitness, games_since_last_reproduction, offspring_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                draws, fitness, games_since_last_reproduction, offspring_count,
+                parent_avg_fitness
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 parent1_id,
@@ -98,6 +100,7 @@ class Repository:
                 fitness,
                 games_since_last_reproduction,
                 offspring_count,
+                parent_avg_fitness,
             ),
         )
         return cursor.lastrowid
@@ -221,4 +224,124 @@ class Repository:
         row = self.conn.execute(
             "SELECT * FROM population_snapshots ORDER BY tick DESC LIMIT 1"
         ).fetchone()
+        return dict(row) if row else None
+
+    # -- simulation config / history / state -------------------------------
+
+    def insert_simulation_config(
+        self,
+        *,
+        simulation_id: str,
+        board_columns: int,
+        board_rows: int,
+        hidden_layer_sizes: list,
+        weight_init_std: float,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO simulation_config (
+                id, simulation_id, board_columns, board_rows,
+                hidden_layer_sizes, weight_init_std
+            ) VALUES (1, ?, ?, ?, ?, ?)
+            """,
+            (simulation_id, board_columns, board_rows, json.dumps(hidden_layer_sizes), weight_init_std),
+        )
+
+    def get_simulation_config(self) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM simulation_config WHERE id = 1").fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        record["hidden_layer_sizes"] = json.loads(record["hidden_layer_sizes"])
+        return record
+
+    def insert_simulation_config_history_row(
+        self,
+        *,
+        tick: int,
+        population_size: int,
+        lifespan_range: tuple[int, int],
+        lifespan_mutation_scale: float,
+        mutation_rate_range: tuple[float, float],
+        mutation_rate_tau: float,
+        crossover_rate_range: tuple[float, float],
+        crossover_rate_mutation_std: float,
+        tournament_size: int,
+        reproduction_interval_min: int,
+        reproduction_interval_max: int,
+        games_per_pair_per_tick: int,
+        benchmark_every_n_ticks: int,
+        benchmark_games_per_opponent: int,
+        random_seed: int,
+        cull_fraction_range: tuple[float, float],
+        cull_fraction_beta_a: float,
+        cull_fraction_beta_b: float,
+        cull_allow_immature_offspring: bool,
+    ) -> int:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO simulation_config_history (
+                tick, population_size, lifespan_range, lifespan_mutation_scale,
+                mutation_rate_range, mutation_rate_tau, crossover_rate_range,
+                crossover_rate_mutation_std, tournament_size,
+                reproduction_interval_min, reproduction_interval_max,
+                games_per_pair_per_tick, benchmark_every_n_ticks,
+                benchmark_games_per_opponent, random_seed, cull_fraction_range,
+                cull_fraction_beta_a, cull_fraction_beta_b,
+                cull_allow_immature_offspring
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tick,
+                population_size,
+                json.dumps(list(lifespan_range)),
+                lifespan_mutation_scale,
+                json.dumps(list(mutation_rate_range)),
+                mutation_rate_tau,
+                json.dumps(list(crossover_rate_range)),
+                crossover_rate_mutation_std,
+                tournament_size,
+                reproduction_interval_min,
+                reproduction_interval_max,
+                games_per_pair_per_tick,
+                benchmark_every_n_ticks,
+                benchmark_games_per_opponent,
+                random_seed,
+                json.dumps(list(cull_fraction_range)),
+                cull_fraction_beta_a,
+                cull_fraction_beta_b,
+                int(cull_allow_immature_offspring),
+            ),
+        )
+        return cursor.lastrowid
+
+    def get_effective_config_at_tick(self, tick: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT * FROM simulation_config_history
+            WHERE tick <= ? ORDER BY tick DESC LIMIT 1
+            """,
+            (tick,),
+        ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        record["lifespan_range"] = tuple(json.loads(record["lifespan_range"]))
+        record["mutation_rate_range"] = tuple(json.loads(record["mutation_rate_range"]))
+        record["crossover_rate_range"] = tuple(json.loads(record["crossover_rate_range"]))
+        record["cull_fraction_range"] = tuple(json.loads(record["cull_fraction_range"]))
+        record["cull_allow_immature_offspring"] = bool(record["cull_allow_immature_offspring"])
+        return record
+
+    def upsert_simulation_state(self, *, current_tick: int, rng_state: str) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO simulation_state (id, current_tick, rng_state) VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET current_tick = excluded.current_tick, rng_state = excluded.rng_state
+            """,
+            (current_tick, rng_state),
+        )
+
+    def get_simulation_state(self) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM simulation_state WHERE id = 1").fetchone()
         return dict(row) if row else None

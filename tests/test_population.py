@@ -469,3 +469,119 @@ def test_fifty_tick_run_shows_plausible_dynamics_and_no_runaway_size():
     assert len(all_agents) > config.population_size  # births occurred
     assert len(dead_agents) > 0  # deaths occurred
     assert len(born_agents) > 0  # at least one child was actually born
+
+
+# -- 10.1 parent_avg_fitness persistence --------------------------------------------
+
+
+def test_reproduce_persists_parent_avg_fitness_to_storage():
+    config = _test_config(population_size=3)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(20))
+    pop.initialize()
+    parent = pop.alive[0]
+    parent.genome = dataclasses.replace(parent.genome, crossover_rate=0.0)
+    parent.fitness = 0.42
+
+    pop._reproduce(parent)
+
+    child = pop.alive[-1]
+    assert child.parent_avg_fitness == 0.42
+    record = repo.get_agent(child.agent_id)
+    assert record["parent_avg_fitness"] == 0.42
+
+
+# -- 10.2 Population.load() ----------------------------------------------------------
+
+
+def test_load_reconstructs_alive_agents_with_genome_lineage_and_stats():
+    config = _test_config(population_size=6)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(21))
+    pop.initialize()
+    for _ in range(3):
+        pop.run_tick()
+    repo.upsert_simulation_state(current_tick=pop.tick, rng_state='{"marker": "resume-state"}')
+
+    loaded, rng_state = Population.load(config, repo)
+
+    alive_ids = {a.agent_id for a in pop.alive}
+    loaded_ids = {a.agent_id for a in loaded.alive}
+    assert loaded_ids == alive_ids
+
+    original_by_id = {a.agent_id: a for a in pop.alive}
+    for agent in loaded.alive:
+        original = original_by_id[agent.agent_id]
+        assert np.array_equal(agent.genome.weights, original.genome.weights)
+        assert agent.genome.hidden_layer_sizes == original.genome.hidden_layer_sizes
+        assert agent.parent1_id == original.parent1_id
+        assert agent.parent2_id == original.parent2_id
+        assert agent.generation == original.generation
+        assert agent.parent_avg_fitness == original.parent_avg_fitness
+        assert agent.games_played == original.games_played
+        assert agent.wins == original.wins
+        assert agent.losses == original.losses
+        assert agent.draws == original.draws
+        assert agent.fitness == original.fitness
+        assert agent.games_since_last_reproduction == original.games_since_last_reproduction
+
+    assert rng_state == '{"marker": "resume-state"}'
+
+
+def test_load_excludes_dead_agents():
+    config = _test_config(population_size=2)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(22))
+    pop.initialize()
+    dead_agent, alive_agent = pop.alive[0], pop.alive[1]
+    pop._kill(dead_agent, cause="culled")
+    repo.upsert_simulation_state(current_tick=pop.tick, rng_state="{}")
+
+    loaded, _ = Population.load(config, repo)
+
+    loaded_ids = {a.agent_id for a in loaded.alive}
+    assert loaded_ids == {alive_agent.agent_id}
+
+
+def test_load_restores_tick_from_simulation_state():
+    config = _test_config(population_size=3)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(23))
+    pop.initialize()
+    for _ in range(5):
+        pop.run_tick()
+    repo.upsert_simulation_state(current_tick=pop.tick, rng_state="{}")
+
+    loaded, _ = Population.load(config, repo)
+    assert loaded.tick == pop.tick
+
+    loaded.run_tick()
+    assert loaded.tick == pop.tick + 1
+
+
+def test_load_preserves_tier2_cull_ordering_via_persisted_parent_avg_fitness():
+    config = _test_config(
+        population_size=1,
+        cull_fraction_range=(0.5, 0.5),
+        cull_allow_immature_offspring=True,
+        reproduction_interval_min=10,
+    )
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(24))
+
+    low_paf_genome = random_genome(config, rng=np.random.default_rng(1))
+    low = pop._add_agent(low_paf_genome, parent1_id=None, parent2_id=None, generation=0, parent_avg_fitness=0.1)
+    low.games_played = 0
+    high_paf_genome = random_genome(config, rng=np.random.default_rng(2))
+    high = pop._add_agent(high_paf_genome, parent1_id=None, parent2_id=None, generation=0, parent_avg_fitness=0.9)
+    high.games_played = 0
+    repo.upsert_simulation_state(current_tick=pop.tick, rng_state="{}")
+
+    loaded, _ = Population.load(config, repo)
+    assert len(loaded.alive) == 2
+
+    loaded._enforce_population_cap()
+
+    # Tier-2 ranks by (persisted) parent_avg_fitness ascending -- lowest culled first
+    assert len(loaded.alive) == 1
+    assert loaded.alive[0].agent_id == high.agent_id

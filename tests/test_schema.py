@@ -17,7 +17,39 @@ def test_create_schema_creates_all_tables():
     conn = sqlite3.connect(":memory:")
     create_schema(conn)
     tables = _table_names(conn)
-    assert {"agents", "games", "population_snapshots", "benchmark_results"} <= tables
+    assert {
+        "agents",
+        "games",
+        "population_snapshots",
+        "benchmark_results",
+        "simulation_config",
+        "simulation_config_history",
+        "simulation_state",
+    } <= tables
+
+
+def test_agents_table_has_parent_avg_fitness_column():
+    conn = sqlite3.connect(":memory:")
+    create_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(agents)").fetchall()}
+    assert "parent_avg_fitness" in cols
+
+
+def test_simulation_config_rejects_a_second_row():
+    conn = sqlite3.connect(":memory:")
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO simulation_config (id, simulation_id, board_columns, board_rows, "
+        "hidden_layer_sizes, weight_init_std) VALUES (1, 'a', 7, 6, '[24]', 0.5)"
+    )
+    try:
+        conn.execute(
+            "INSERT INTO simulation_config (id, simulation_id, board_columns, board_rows, "
+            "hidden_layer_sizes, weight_init_std) VALUES (1, 'b', 7, 6, '[24]', 0.5)"
+        )
+        assert False, "expected a second insert to be rejected"
+    except sqlite3.IntegrityError:
+        pass
 
 
 def test_create_schema_creates_all_indices():

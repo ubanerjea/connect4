@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from evoconnect4.agent.agent import Agent
-from evoconnect4.agent.genome import Genome, crossover, encode, mutate, random_genome
+from evoconnect4.agent.genome import Genome, crossover, decode, encode, mutate, random_genome
 from evoconnect4.config import Config
 from evoconnect4.game.match import play_match
 from evoconnect4.storage.repository import Repository
@@ -35,6 +35,47 @@ class Population:
             genome = random_genome(self.config, rng=self.rng)
             self._add_agent(genome, parent1_id=None, parent2_id=None, generation=0)
         self.repo.commit()
+
+    @classmethod
+    def load(cls, config: Config, repo: Repository) -> tuple["Population", str]:
+        """Reconstruct a live population from storage -- the resume counterpart to initialize().
+
+        Returns the population and the persisted RNG state string; the caller
+        decides whether to restore it exactly or branch to a new seed (plan
+        Sec5's resume semantics), so it is not applied here.
+        """
+        population = cls(config, repo)
+        for record in repo.list_agents(status="alive"):
+            genome = decode(
+                {
+                    "weights": record["nn_weights"],
+                    "hidden_layer_sizes": record["nn_architecture"],
+                    "lifespan": record["lifespan"],
+                    "mutation_rate": record["mutation_rate"],
+                    "crossover_rate": record["crossover_rate"],
+                }
+            )
+            agent = Agent(
+                genome,
+                config.board_columns,
+                config.board_rows,
+                agent_id=record["agent_id"],
+                generation=record["generation"],
+                parent1_id=record["parent1_id"],
+                parent2_id=record["parent2_id"],
+                parent_avg_fitness=record["parent_avg_fitness"],
+            )
+            agent.games_played = record["games_played"]
+            agent.wins = record["wins"]
+            agent.losses = record["losses"]
+            agent.draws = record["draws"]
+            agent.fitness = record["fitness"]
+            agent.games_since_last_reproduction = record["games_since_last_reproduction"]
+            population.alive.append(agent)
+
+        state = repo.get_simulation_state()
+        population.tick = state["current_tick"]
+        return population, state["rng_state"]
 
     def run_tick(self) -> None:
         self.tick += 1
@@ -79,6 +120,7 @@ class Population:
             lifespan=genome.lifespan,
             mutation_rate=genome.mutation_rate,
             crossover_rate=genome.crossover_rate,
+            parent_avg_fitness=parent_avg_fitness,
         )
         agent = Agent(
             genome,
