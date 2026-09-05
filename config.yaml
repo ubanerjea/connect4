@@ -23,6 +23,11 @@ reproduction_interval_max: 25
 
 games_per_pair_per_tick: 2
 
+cull_fraction_range: [0.10, 0.50]
+cull_fraction_beta_a: 1.0
+cull_fraction_beta_b: 1.0
+cull_allow_immature_offspring: false
+
 benchmark_every_n_ticks: 10
 benchmark_games_per_opponent: 20
 

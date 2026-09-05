@@ -198,9 +198,9 @@ Left alone, fitness-driven reproduction could grow the population indefinitely. 
 
 Each tick, the alive population is shuffled and paired up sequentially (an odd one out sits that tick out). Because Connect Four has a known first-player edge, each matched pair plays **two** games per tick — one with each agent moving first — so a pair's results reflect who played better, not just who happened to go first.
 
-### 4.7 Senescence: a cost for longevity (planned, Phase 4 — not yet built)
+### 4.7 Senescence: a cost for longevity (planned, Phase 9 — not yet built)
 
-As designed so far, `lifespan` is a purely dominant trait with no offsetting cost: a longer-lived agent gets strictly more ticks to hit `reproduction_interval(fitness)` repeatedly (§4.3) and strictly more chances to be sampled as a tournament-selection parent (§3.3), independent of whether its network is actually any good at Connect Four. Left alone, this is expected to pull the population toward maximum lifespan regardless of playing skill — exactly the "lifespan could pin at its ceiling" risk flagged in §14. The fix decided on (but not yet implemented — this belongs to Phase 4's evolution core, not Phase 2's agent/genome work) is **somatic mutation**, distinct from the germline mutation already in §3.2:
+As designed so far, `lifespan` is a purely dominant trait with no offsetting cost: a longer-lived agent gets strictly more ticks to hit `reproduction_interval(fitness)` repeatedly (§4.3) and strictly more chances to be sampled as a tournament-selection parent (§3.3), independent of whether its network is actually any good at Connect Four. Left alone, this is expected to pull the population toward maximum lifespan regardless of playing skill — exactly the "lifespan could pin at its ceiling" risk flagged in §14. The fix decided on (but not yet implemented — deferred past Phase 4's core evolution mechanics to its own follow-up phase, §11 Phase 9) is **somatic mutation**, distinct from the germline mutation already in §3.2:
 
 - **Germline mutation** (§3.2, existing): happens only at reproduction, perturbs the *genome*, and is inherited by offspring.
 - **Somatic mutation** (new): happens continuously during an agent's own life, perturbs only its *live, in-play weights* — a copy, separate from the stored genome — and is **never inherited**. The biological parallel is exact, not just a loose metaphor: somatic mutations accumulate in an organism's body over its life (it's literally why cancer risk rises with age) without ever reaching the germ line.
@@ -209,7 +209,7 @@ Mechanically: once an agent passes some fraction of its own `lifespan` (a thresh
 
 This closes the loop through mechanics the plan already has, with no new machinery: since fitness is a win-rate over *all* games played (§5), degraded late-life performance drags an agent's own fitness down, which lengthens its `reproduction_interval` (§4.3) and makes it a more likely culling target (§4.5) — so a long lifespan now comes with rising risk, not a free lunch.
 
-`Agent` (Phase 2) intentionally does **not** carry this — it stays a minimal genome + network + move-chooser wrapper. Implementing this requires `Agent` (or whatever Phase 4 introduces) to hold mutable live weights distinct from the immutable genome, plus the tick-loop logic to trigger and scale the drift by age. That's Phase 4's responsibility when it builds the evolution core.
+`Agent` (Phase 2) intentionally does **not** carry this. Phase 4 extends `Agent` with live-stats (games_played, wins, losses, draws, fitness, games_since_last_reproduction) to run the core evolutionary loop, but still does not add mutable live weights for this — that's Phase 9's addition, once the core loop (reproduction timing, death, population cap) is proven on its own.
 
 ---
 
@@ -410,10 +410,12 @@ A Jupyter notebook or a couple of standalone scripts are both fine for the MVP; 
 | 2 — Agent & genome | NN forward pass, genome encode/decode, random init | Round-trip test: genome → network → identical weight vector back |
 | 3 — Database | Schema (all 4 tables), full agent/game CRUD, snapshot insert/read; `benchmark_results` schema only, CRUD deferred to Phase 6 | Insert a fake agent + game, read both back correctly |
 | 4 — Evolution core | Mutation, crossover, reproduction timing, death, population cap | 50-tick run on a small population shows plausible births/deaths, no runaway size |
-| 5 — Full integration | Wire everything into `run_simulation.py` | Multi-hundred-tick run completes with no crashes, DB fills in as expected |
+| 4b — Evolution core updates | Parametrized (percentage-range + Beta-distribution-biased) culling with an optional lineage-aware immature-offspring tier, `Agent` lineage tracking (`parent1_id`/`parent2_id`), and a `games_per_pair_per_tick` config-wiring fix. See `plans/phase-4b-evolution-core-updates.md` | Cull-count distribution across repeated trials matches the configured range/bias; tier-2 (immature offspring) only activates when enabled and tier 1 is exhausted; `games_per_pair_per_tick` is honored |
+| 5 — Full integration | Wire everything into `run_simulation.py`: CLI args (`--ticks`/`--seed`/`--db`), fresh-vs-resume run lifecycle, full config snapshotting (frozen + mutable-history), RNG-state persistence for exact resume continuity. See `plans/phase-5-full-integration.md` | Multi-hundred-tick run completes with no crashes, DB fills in as expected; a paused-and-resumed run continues correctly; a mismatched frozen config refuses resume |
 | 6 — Baseline benchmarking | Scheduled evaluation of the population's current-best agent against Phase 1's bots, writing to `benchmark_results` | `benchmark_results` shows a visible trend over ticks |
 | 7 — Analytics | Plotting scripts against the DB | Charts in §9 generate from a completed run |
 | 8 — Human play | CLI loading a saved agent | You can play a full game against the current best agent, start to finish |
+| 9 — Senescence | Somatic mutation: live-weight decay past a lifespan threshold (§4.7), separate from germline mutation and never inherited | A long-lived agent's live weights measurably diverge from its genome by late life, and post-threshold performance trends downward relative to pre-threshold |
 
 ---
 

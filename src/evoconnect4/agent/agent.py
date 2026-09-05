@@ -1,8 +1,8 @@
-"""Minimal agent: wraps a genome + the network built from it.
+"""Agent: wraps a genome + the network built from it + live stats.
 
-No live-stats (games_played/wins/fitness) and no mutable live-weights for
-somatic mutation -- both need a database (Phase 3) or a running tick loop
-(Phase 4) to mean anything, and are deliberately deferred (plan Sec4.7).
+Live-stats (games_played/wins/losses/draws/fitness/games_since_last_reproduction)
+are population/evolution bookkeeping (Phase 4), not game-specific -- unlike a
+mutable live-weights copy for somatic mutation, which stays deferred to Phase 9.
 """
 
 from __future__ import annotations
@@ -15,10 +15,25 @@ from evoconnect4.game.connect_four import Board
 
 
 class Agent:
-    def __init__(self, genome: Genome, columns: int, rows: int) -> None:
+    def __init__(
+        self,
+        genome: Genome,
+        columns: int,
+        rows: int,
+        agent_id: int | None = None,
+        generation: int = 0,
+        parent1_id: int | None = None,
+        parent2_id: int | None = None,
+        parent_avg_fitness: float = 0.0,
+    ) -> None:
         self.genome = genome
         self.columns = columns
         self.rows = rows
+        self.agent_id = agent_id
+        self.generation = generation
+        self.parent1_id = parent1_id
+        self.parent2_id = parent2_id
+        self.parent_avg_fitness = parent_avg_fitness
         hidden_size = genome.hidden_layer_sizes[0]
         self.network = Network(
             genome.weights,
@@ -26,6 +41,13 @@ class Agent:
             hidden_size=hidden_size,
             output_size=columns,
         )
+
+        self.games_played = 0
+        self.wins = 0
+        self.losses = 0
+        self.draws = 0
+        self.fitness = 0.0
+        self.games_since_last_reproduction = 0
 
     def choose_move(self, board: Board) -> int:
         x = self._encode(board)

@@ -21,6 +21,21 @@ def test_agent_constructs_from_a_random_genome():
     assert agent.network is not None
 
 
+def test_agent_live_stats_default_to_zero():
+    agent = _make_agent()
+    assert agent.agent_id is None
+    assert agent.generation == 0
+    assert agent.parent1_id is None
+    assert agent.parent2_id is None
+    assert agent.parent_avg_fitness == 0.0
+    assert agent.games_played == 0
+    assert agent.wins == 0
+    assert agent.losses == 0
+    assert agent.draws == 0
+    assert agent.fitness == 0.0
+    assert agent.games_since_last_reproduction == 0
+
+
 def test_agent_always_chooses_a_legal_move():
     agent = _make_agent()
 

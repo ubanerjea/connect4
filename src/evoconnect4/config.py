@@ -37,6 +37,11 @@ class Config:
 
     games_per_pair_per_tick: int
 
+    cull_fraction_range: tuple[float, float]
+    cull_fraction_beta_a: float
+    cull_fraction_beta_b: float
+    cull_allow_immature_offspring: bool
+
     benchmark_every_n_ticks: int
     benchmark_games_per_opponent: int
 
@@ -64,6 +69,10 @@ def load_config(path: Path | str = _DEFAULT_CONFIG_PATH) -> Config:
         reproduction_interval_min=raw["reproduction_interval_min"],
         reproduction_interval_max=raw["reproduction_interval_max"],
         games_per_pair_per_tick=raw["games_per_pair_per_tick"],
+        cull_fraction_range=tuple(raw["cull_fraction_range"]),
+        cull_fraction_beta_a=raw["cull_fraction_beta_a"],
+        cull_fraction_beta_b=raw["cull_fraction_beta_b"],
+        cull_allow_immature_offspring=raw["cull_allow_immature_offspring"],
         benchmark_every_n_ticks=raw["benchmark_every_n_ticks"],
         benchmark_games_per_opponent=raw["benchmark_games_per_opponent"],
         random_seed=raw["random_seed"],
