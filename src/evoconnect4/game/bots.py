@@ -8,27 +8,35 @@ from __future__ import annotations
 
 import random
 
+import numpy as np
+
 from evoconnect4.game.connect_four import Board
 
 
-def random_mover(board: Board) -> int:
-    return random.choice(board.legal_moves())
+def _choice(options: list[int], rng: np.random.Generator | None) -> int:
+    if rng is not None:
+        return int(rng.choice(options))
+    return random.choice(options)
 
 
-def heuristic_bot(board: Board) -> int:
+def random_mover(board: Board, rng: np.random.Generator | None = None) -> int:
+    return _choice(board.legal_moves(), rng)
+
+
+def heuristic_bot(board: Board, rng: np.random.Generator | None = None) -> int:
     legal = board.legal_moves()
     me = board.current_player
     opponent = -me
 
     winning = [c for c in legal if board.would_win(c, me)]
     if winning:
-        return random.choice(winning)
+        return _choice(winning, rng)
 
     blocking = [c for c in legal if board.would_win(c, opponent)]
     if blocking:
-        return random.choice(blocking)
+        return _choice(blocking, rng)
 
     center = (board.columns - 1) / 2
     min_distance = min(abs(c - center) for c in legal)
     nearest = [c for c in legal if abs(c - center) == min_distance]
-    return random.choice(nearest)
+    return _choice(nearest, rng)

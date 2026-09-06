@@ -32,12 +32,13 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE TABLE IF NOT EXISTS games (
     game_id INTEGER PRIMARY KEY,
     tick INTEGER NOT NULL,
-    player1_agent_id INTEGER NOT NULL REFERENCES agents(agent_id),
-    player2_agent_id INTEGER NOT NULL REFERENCES agents(agent_id),
+    player1_agent_id INTEGER REFERENCES agents(agent_id),
+    player2_agent_id INTEGER REFERENCES agents(agent_id),
     result TEXT NOT NULL,
     num_moves INTEGER NOT NULL,
     move_history TEXT NOT NULL,
-    game_type TEXT NOT NULL
+    game_type TEXT NOT NULL,
+    opponent_label TEXT
 );
 
 CREATE TABLE IF NOT EXISTS population_snapshots (
@@ -105,6 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_parent2_id ON agents(parent2_id);
 CREATE INDEX IF NOT EXISTS idx_games_tick ON games(tick);
 CREATE INDEX IF NOT EXISTS idx_games_player1_agent_id ON games(player1_agent_id);
 CREATE INDEX IF NOT EXISTS idx_games_player2_agent_id ON games(player2_agent_id);
+CREATE INDEX IF NOT EXISTS idx_games_game_type ON games(game_type);
 CREATE INDEX IF NOT EXISTS idx_simulation_config_history_tick ON simulation_config_history(tick);
 """
 

@@ -63,8 +63,18 @@ def test_create_schema_creates_all_indices():
         "idx_games_tick",
         "idx_games_player1_agent_id",
         "idx_games_player2_agent_id",
+        "idx_games_game_type",
     }
     assert expected <= indices
+
+
+def test_games_table_agent_ids_are_nullable_and_has_opponent_label():
+    conn = sqlite3.connect(":memory:")
+    create_schema(conn)
+    cols = {row[1]: row[3] for row in conn.execute("PRAGMA table_info(games)").fetchall()}
+    assert cols["player1_agent_id"] == 0  # notnull flag off
+    assert cols["player2_agent_id"] == 0
+    assert "opponent_label" in cols
 
 
 def test_create_schema_is_idempotent():

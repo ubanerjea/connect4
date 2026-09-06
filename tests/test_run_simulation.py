@@ -212,6 +212,46 @@ def test_resume_appends_no_history_row_when_nothing_changed(tmp_path):
 # -- 1.7 Full-run verification (Phase 5 DoD) -------------------------------------
 
 
+def test_resume_across_a_benchmark_boundary_continues_bit_for_bit_identically(tmp_path):
+    config = _test_config(population_size=10, benchmark_every_n_ticks=3, benchmark_games_per_opponent=4)
+
+    continuous_db = str(tmp_path / "continuous_bench.db")
+    run(ticks=8, seed=123, db_path=continuous_db, config=config)
+
+    split_db = str(tmp_path / "split_bench.db")
+    run(ticks=5, seed=123, db_path=split_db, config=config)  # pauses mid-way, past tick 3's benchmark
+    run(ticks=3, seed=None, db_path=split_db, config=config)  # resumes across tick 6's benchmark
+
+    def _agent_fingerprint(db_path):
+        repo = Repository(db_path)
+        agents = repo.list_agents()
+        return sorted(
+            (a["agent_id"], a["status"], a["parent1_id"], a["parent2_id"], a["fitness"], tuple(a["nn_weights"]))
+            for a in agents
+        )
+
+    def _benchmark_fingerprint(db_path):
+        repo = Repository(db_path)
+        results = repo.list_benchmark_results()
+        return sorted((r["tick"], r["agent_id"], r["opponent_type"], r["win_rate"]) for r in results)
+
+    def _benchmark_game_fingerprint(db_path):
+        repo = Repository(db_path)
+        games = [g for g in repo.list_games() if g["game_type"] == "benchmark"]
+        return sorted(
+            (g["tick"], g["player1_agent_id"], g["opponent_label"], g["result"], tuple(g["move_history"]))
+            for g in games
+        )
+
+    assert _agent_fingerprint(continuous_db) == _agent_fingerprint(split_db)
+    assert _benchmark_fingerprint(continuous_db) == _benchmark_fingerprint(split_db)
+    assert _benchmark_game_fingerprint(continuous_db) == _benchmark_game_fingerprint(split_db)
+
+    continuous_state = Repository(continuous_db).get_simulation_state()
+    split_state = Repository(split_db).get_simulation_state()
+    assert continuous_state["rng_state"] == split_state["rng_state"]
+
+
 def test_several_hundred_tick_run_completes_without_error(tmp_path):
     db_path = str(tmp_path / "full_run.db")
     config = _test_config(population_size=20, lifespan_range=(15, 30))

@@ -1,19 +1,23 @@
 """Population: the live pool, running one tick (plan Sec4.2).
 
 Wires together the game engine (Phase 1), agents/genome (Phase 2), and
-storage (Phase 3). The benchmark-tick step in Sec4.2's pseudocode is out
-of scope here (Phase 6), as is senescence (Sec4.7, now Phase 9).
+storage (Phase 3). Senescence (Sec4.7, now Phase 9) is still out of scope.
 """
 
 from __future__ import annotations
+
+import functools
 
 import numpy as np
 
 from evoconnect4.agent.agent import Agent
 from evoconnect4.agent.genome import Genome, crossover, decode, encode, mutate, random_genome
 from evoconnect4.config import Config
+from evoconnect4.game.bots import heuristic_bot, random_mover
 from evoconnect4.game.match import play_match
 from evoconnect4.storage.repository import Repository
+
+_BASELINE_OPPONENTS = ((random_mover, "random"), (heuristic_bot, "heuristic"))
 
 
 def reproduction_interval(fitness: float, config: Config) -> float:
@@ -93,6 +97,8 @@ class Population:
                 self._reproduce(agent)
             if agent in self.alive and agent.games_played >= agent.genome.lifespan:
                 self._kill(agent, cause="old_age")
+
+        self._run_benchmark()
 
         self._write_snapshot()
         self.repo.commit()
@@ -266,6 +272,52 @@ class Population:
     def _kill(self, agent: Agent, *, cause: str) -> None:
         self.repo.mark_agent_dead(agent.agent_id, death_tick=self.tick, death_cause=cause)
         self.alive.remove(agent)
+
+    def _run_benchmark(self) -> None:
+        if self.tick % self.config.benchmark_every_n_ticks != 0:
+            return
+        if not self.alive:
+            return
+
+        best = max(self.alive, key=lambda a: a.fitness)
+
+        for bot_fn, opponent_type in _BASELINE_OPPONENTS:
+            bound_bot = functools.partial(bot_fn, rng=self.rng)
+            wins = losses = draws = 0
+
+            for i in range(self.config.benchmark_games_per_opponent):
+                first_mover = 1 if i % 2 == 0 else -1
+                result = play_match(best.choose_move, bound_bot, first_mover=first_mover)
+
+                if result.winner == 1:
+                    db_result = "player1_win"
+                    wins += 1
+                elif result.winner == -1:
+                    db_result = "player2_win"
+                    losses += 1
+                else:
+                    db_result = "draw"
+                    draws += 1
+
+                self.repo.insert_game(
+                    tick=self.tick,
+                    player1_agent_id=best.agent_id,
+                    player2_agent_id=None,
+                    result=db_result,
+                    num_moves=result.num_moves,
+                    move_history=result.move_history,
+                    game_type="benchmark",
+                    opponent_label=opponent_type,
+                )
+
+            win_rate = (wins + 0.5 * draws) / self.config.benchmark_games_per_opponent
+            self.repo.insert_benchmark_result(
+                tick=self.tick,
+                agent_id=best.agent_id,
+                opponent_type=opponent_type,
+                games_played=self.config.benchmark_games_per_opponent,
+                win_rate=win_rate,
+            )
 
     def _write_snapshot(self) -> None:
         fitnesses = [a.fitness for a in self.alive]

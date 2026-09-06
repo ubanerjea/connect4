@@ -373,3 +373,123 @@ def test_simulation_state_upsert_keeps_only_latest_values():
 def test_get_simulation_state_returns_none_when_empty():
     repo = _repo()
     assert repo.get_simulation_state() is None
+
+
+# -- 7.1 insert_game: benchmark/non-evolution shape --------------------------
+
+
+def test_insert_game_accepts_benchmark_shape():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+
+    game_id = repo.insert_game(
+        tick=10,
+        player1_agent_id=agent_id,
+        player2_agent_id=None,
+        result="player1_win",
+        num_moves=8,
+        move_history=[3, 2, 4],
+        game_type="benchmark",
+        opponent_label="heuristic",
+    )
+    record = repo.get_game(game_id)
+
+    assert record["player1_agent_id"] == agent_id
+    assert record["player2_agent_id"] is None
+    assert record["game_type"] == "benchmark"
+    assert record["opponent_label"] == "heuristic"
+
+
+def test_insert_game_rejects_evolution_missing_second_agent():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+
+    try:
+        repo.insert_game(
+            tick=1, player1_agent_id=agent_id, player2_agent_id=None,
+            result="player1_win", num_moves=1, move_history=[0], game_type="evolution",
+        )
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_insert_game_rejects_evolution_with_opponent_label():
+    repo = _repo()
+    p1 = _insert_agent(repo)
+    p2 = _insert_agent(repo)
+
+    try:
+        repo.insert_game(
+            tick=1, player1_agent_id=p1, player2_agent_id=p2,
+            result="player1_win", num_moves=1, move_history=[0], game_type="evolution",
+            opponent_label="heuristic",
+        )
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_insert_game_rejects_non_evolution_with_both_agent_ids():
+    repo = _repo()
+    p1 = _insert_agent(repo)
+    p2 = _insert_agent(repo)
+
+    try:
+        repo.insert_game(
+            tick=1, player1_agent_id=p1, player2_agent_id=p2,
+            result="player1_win", num_moves=1, move_history=[0], game_type="benchmark",
+            opponent_label="heuristic",
+        )
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_insert_game_rejects_non_evolution_without_opponent_label():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+
+    try:
+        repo.insert_game(
+            tick=1, player1_agent_id=agent_id, player2_agent_id=None,
+            result="player1_win", num_moves=1, move_history=[0], game_type="benchmark",
+        )
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+# -- 7.2 benchmark_results round trip / listing ------------------------------
+
+
+def test_insert_benchmark_result_round_trips_via_listing():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+
+    result_id = repo.insert_benchmark_result(
+        tick=10, agent_id=agent_id, opponent_type="heuristic", games_played=20, win_rate=0.65,
+    )
+    results = repo.list_benchmark_results()
+    match = next(r for r in results if r["benchmark_id"] == result_id)
+
+    assert match["tick"] == 10
+    assert match["agent_id"] == agent_id
+    assert match["opponent_type"] == "heuristic"
+    assert match["games_played"] == 20
+    assert match["win_rate"] == 0.65
+
+
+def test_list_benchmark_results_filters_by_tick():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+
+    tick_10_id = repo.insert_benchmark_result(
+        tick=10, agent_id=agent_id, opponent_type="random", games_played=20, win_rate=0.5,
+    )
+    repo.insert_benchmark_result(
+        tick=20, agent_id=agent_id, opponent_type="random", games_played=20, win_rate=0.6,
+    )
+
+    tick_10_results = repo.list_benchmark_results(tick=10)
+    assert {r["benchmark_id"] for r in tick_10_results} == {tick_10_id}

@@ -585,3 +585,80 @@ def test_load_preserves_tier2_cull_ordering_via_persisted_parent_avg_fitness():
     # Tier-2 ranks by (persisted) parent_avg_fitness ascending -- lowest culled first
     assert len(loaded.alive) == 1
     assert loaded.alive[0].agent_id == high.agent_id
+
+
+# -- 11.1 Benchmark evaluation --------------------------------------------------
+
+
+def test_benchmark_fires_only_on_schedule():
+    config = _test_config(population_size=6, benchmark_every_n_ticks=3, benchmark_games_per_opponent=4)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(30))
+    pop.initialize()
+
+    pop.run_tick()  # tick 1 -- not a multiple of 3
+    assert repo.list_benchmark_results() == []
+
+    pop.run_tick()  # tick 2 -- not a multiple of 3
+    assert repo.list_benchmark_results() == []
+
+    pop.run_tick()  # tick 3 -- benchmark tick
+    results = repo.list_benchmark_results()
+    assert {r["opponent_type"] for r in results} == {"random", "heuristic"}
+    assert len(results) == 2
+
+
+def test_benchmark_records_correct_games_and_result_shape():
+    config = _test_config(population_size=6, benchmark_every_n_ticks=1, benchmark_games_per_opponent=5)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(31))
+    pop.initialize()
+
+    pop.run_tick()
+
+    results = repo.list_benchmark_results(tick=1)
+    assert len(results) == 2
+    for r in results:
+        assert r["games_played"] == 5
+        assert 0.0 <= r["win_rate"] <= 1.0
+
+    games = repo.list_games(tick=1)
+    benchmark_games = [g for g in games if g["game_type"] == "benchmark"]
+    assert len(benchmark_games) == 2 * 5  # 2 opponents x 5 games each
+    for g in benchmark_games:
+        assert g["player2_agent_id"] is None
+        assert g["opponent_label"] in ("random", "heuristic")
+        assert g["player1_agent_id"] is not None
+
+
+def test_benchmark_games_do_not_affect_agent_official_record():
+    config = _test_config(population_size=4, benchmark_every_n_ticks=1, benchmark_games_per_opponent=6)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(32))
+    pop.initialize()
+
+    pop.run_tick()
+
+    best = max(pop.alive, key=lambda a: a.fitness)
+    # 4 agents, no odd one out -- every agent plays exactly games_per_pair_per_tick
+    # evolution games this tick; the 2 * benchmark_games_per_opponent = 12 benchmark
+    # games the best agent also played this tick must not be counted on top of that
+    assert best.games_played == config.games_per_pair_per_tick
+    record = repo.get_agent(best.agent_id)
+    assert record["games_played"] == config.games_per_pair_per_tick
+    assert record["wins"] == best.wins
+    assert record["losses"] == best.losses
+    assert record["draws"] == best.draws
+    assert record["fitness"] == best.fitness
+
+
+def test_benchmark_skips_cleanly_on_empty_population():
+    config = _test_config(population_size=2, benchmark_every_n_ticks=1, benchmark_games_per_opponent=3)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(33))
+    # no initialize() -- population starts empty
+    pop.tick = 1
+
+    pop._run_benchmark()  # should not raise
+
+    assert repo.list_benchmark_results() == []

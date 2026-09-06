@@ -1,7 +1,4 @@
-"""SQLite repository: agent/game CRUD, snapshot insert/read (plan Sec6/Sec7).
-
-benchmark_results has no reader/writer here -- Phase 6 owns that.
-"""
+"""SQLite repository: agent/game CRUD, snapshot insert/read (plan Sec6/Sec7)."""
 
 from __future__ import annotations
 
@@ -150,18 +147,32 @@ class Repository:
         *,
         tick: int,
         player1_agent_id: int,
-        player2_agent_id: int,
+        player2_agent_id: int | None = None,
         result: str,
         num_moves: int,
         move_history: list[int],
         game_type: str,
+        opponent_label: str | None = None,
     ) -> int:
+        if game_type == "evolution":
+            if player2_agent_id is None or opponent_label is not None:
+                raise ValueError(
+                    "game_type='evolution' requires both player1_agent_id and "
+                    "player2_agent_id set, and no opponent_label"
+                )
+        else:
+            if player1_agent_id is None or player2_agent_id is not None or opponent_label is None:
+                raise ValueError(
+                    f"game_type={game_type!r} requires player1_agent_id set (the agent), "
+                    "player2_agent_id unset, and an opponent_label"
+                )
+
         cursor = self.conn.execute(
             """
             INSERT INTO games (
                 tick, player1_agent_id, player2_agent_id, result, num_moves,
-                move_history, game_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                move_history, game_type, opponent_label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tick,
@@ -171,6 +182,7 @@ class Repository:
                 num_moves,
                 json.dumps(move_history),
                 game_type,
+                opponent_label,
             ),
         )
         return cursor.lastrowid
@@ -345,3 +357,31 @@ class Repository:
     def get_simulation_state(self) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM simulation_state WHERE id = 1").fetchone()
         return dict(row) if row else None
+
+    # -- benchmark results ---------------------------------------------------
+
+    def insert_benchmark_result(
+        self,
+        *,
+        tick: int,
+        agent_id: int,
+        opponent_type: str,
+        games_played: int,
+        win_rate: float,
+    ) -> int:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO benchmark_results (
+                tick, agent_id, opponent_type, games_played, win_rate
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (tick, agent_id, opponent_type, games_played, win_rate),
+        )
+        return cursor.lastrowid
+
+    def list_benchmark_results(self, *, tick: int | None = None) -> list[dict[str, Any]]:
+        if tick is None:
+            rows = self.conn.execute("SELECT * FROM benchmark_results").fetchall()
+        else:
+            rows = self.conn.execute("SELECT * FROM benchmark_results WHERE tick = ?", (tick,)).fetchall()
+        return [dict(row) for row in rows]
