@@ -198,9 +198,9 @@ Left alone, fitness-driven reproduction could grow the population indefinitely. 
 
 Each tick, the alive population is shuffled and paired up sequentially (an odd one out sits that tick out). Because Connect Four has a known first-player edge, each matched pair plays **two** games per tick — one with each agent moving first — so a pair's results reflect who played better, not just who happened to go first.
 
-### 4.7 Senescence: a cost for longevity (planned, Phase 9 — not yet built)
+### 4.7 Senescence: a cost for longevity (a possible extension, not yet built — see §13)
 
-As designed so far, `lifespan` is a purely dominant trait with no offsetting cost: a longer-lived agent gets strictly more ticks to hit `reproduction_interval(fitness)` repeatedly (§4.3) and strictly more chances to be sampled as a tournament-selection parent (§3.3), independent of whether its network is actually any good at Connect Four. Left alone, this is expected to pull the population toward maximum lifespan regardless of playing skill — exactly the "lifespan could pin at its ceiling" risk flagged in §14. The fix decided on (but not yet implemented — deferred past Phase 4's core evolution mechanics to its own follow-up phase, §11 Phase 9) is **somatic mutation**, distinct from the germline mutation already in §3.2:
+As designed so far, `lifespan` is a purely dominant trait with no offsetting cost: a longer-lived agent gets strictly more ticks to hit `reproduction_interval(fitness)` repeatedly (§4.3) and strictly more chances to be sampled as a tournament-selection parent (§3.3), independent of whether its network is actually any good at Connect Four. Left alone, this is expected to pull the population toward maximum lifespan regardless of playing skill — exactly the "lifespan could pin at its ceiling" risk flagged in §14. The fix decided on (but not yet implemented — noted as a possible future extension in §13 rather than its own roadmap phase, since it's a small, self-contained addition rather than a full phase of work) is **somatic mutation**, distinct from the germline mutation already in §3.2:
 
 - **Germline mutation** (§3.2, existing): happens only at reproduction, perturbs the *genome*, and is inherited by offspring.
 - **Somatic mutation** (new): happens continuously during an agent's own life, perturbs only its *live, in-play weights* — a copy, separate from the stored genome — and is **never inherited**. The biological parallel is exact, not just a loose metaphor: somatic mutations accumulate in an organism's body over its life (it's literally why cancer risk rises with age) without ever reaching the germ line.
@@ -209,7 +209,7 @@ Mechanically: once an agent passes some fraction of its own `lifespan` (a thresh
 
 This closes the loop through mechanics the plan already has, with no new machinery: since fitness is a win-rate over *all* games played (§5), degraded late-life performance drags an agent's own fitness down, which lengthens its `reproduction_interval` (§4.3) and makes it a more likely culling target (§4.5) — so a long lifespan now comes with rising risk, not a free lunch.
 
-`Agent` (Phase 2) intentionally does **not** carry this. Phase 4 extends `Agent` with live-stats (games_played, wins, losses, draws, fitness, games_since_last_reproduction) to run the core evolutionary loop, but still does not add mutable live weights for this — that's Phase 9's addition, once the core loop (reproduction timing, death, population cap) is proven on its own.
+`Agent` (Phase 2) intentionally does **not** carry this. Phase 4 extends `Agent` with live-stats (games_played, wins, losses, draws, fitness, games_since_last_reproduction) to run the core evolutionary loop, but still does not add mutable live weights for this — see §13 if this extension is ever pursued.
 
 ---
 
@@ -415,7 +415,6 @@ A Jupyter notebook or a couple of standalone scripts are both fine for the MVP; 
 | 6 — Baseline benchmarking | Scheduled evaluation of the population's current-best agent against Phase 1's bots, writing to `benchmark_results`; `games` table extended to a unified, nullable-agent-id log so every game type (evolution/benchmark/human) stays fully replayable. See `plans/phase-6-baseline-benchmarking.md` | `benchmark_results` shows a visible trend over ticks |
 | 7 — Analytics | Plotting scripts against the DB (§9), plus a cross-simulation catalog: a decoupled ETL step that rolls up each run's aggregate-only tables (population snapshots, benchmark results, frozen + initial config) into a shared `analytics.db`, keyed by `simulation_id`, for querying and comparing across runs without `ATTACH`-ing files by hand. See `plans/phase-7-analytics.md` | Charts in §9 generate from a completed run; running the catalog step against multiple run databases produces a queryable `analytics.db` where a single query can compare population/benchmark trends across runs by `simulation_id` |
 | 8 — Human play | CLI loading a saved agent (by id, best-alive, or best-ever), board dimensions sourced from the database's frozen `simulation_config` rather than live `config.yaml`, a "play again?" session loop, and human-vs-agent games logged via Phase 6's already-generic `games` schema. See `plans/phase-8-human-play.md` | You can play a full game against the current best agent, start to finish |
-| 9 — Senescence | Somatic mutation: live-weight decay past a lifespan threshold (§4.7), separate from germline mutation and never inherited | A long-lived agent's live weights measurably diverge from its genome by late life, and post-threshold performance trends downward relative to pre-threshold |
 
 ---
 
@@ -439,6 +438,7 @@ A Jupyter notebook or a couple of standalone scripts are both fine for the MVP; 
 - **A lightweight GUI** (`pygame`, or a tiny local web page) instead of the ASCII CLI board.
 - **A different game entirely** — Othello/Reversi or grid-based Tron (§2's runners-up) — since the game engine sits behind an isolated interface, the agent/evolution/database layers wouldn't need to change.
 - **Benchmark/human games counting toward fitness**: optionally let fixed-baseline (§5) or human-exhibition (§8) results feed into reproductive fitness, not just an agent's official record. Trade-off: benchmarks work today precisely because they don't co-evolve with the population — folding them in turns them into a selection target rather than an independent check, and their low game volume would need a weighting scheme to matter. Keep fitness counter-based if pursued, not recomputed by querying `games`.
+- **Senescence (somatic mutation)**: live, in-play weight decay past a lifespan threshold, distinct from and never rejoining germline mutation — an offsetting cost for longevity, since `lifespan` is currently a purely dominant trait with no downside (the "pinning at its ceiling" risk in §14). Full design already worked out in §4.7. Not treated as its own roadmap phase since it's a small, self-contained addition to `Agent`'s live weights once the core loop is proven, not a full phase of work.
 
 ---
 
