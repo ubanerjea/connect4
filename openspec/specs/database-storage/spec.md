@@ -68,6 +68,17 @@ The system SHALL allow retrieving the most recently recorded population snapshot
 - **WHEN** multiple population snapshots have been recorded at different ticks
 - **THEN** retrieving the latest snapshot SHALL return the one with the highest tick
 
+### Requirement: Population snapshots can be listed
+The system SHALL allow listing all recorded population snapshots, ordered by tick, optionally filtered to a single tick.
+
+#### Scenario: Listing all snapshots returns them in tick order
+- **WHEN** multiple population snapshots have been recorded at different ticks
+- **THEN** listing all snapshots SHALL return them ordered by tick
+
+#### Scenario: Listing filtered by tick returns only that tick's snapshot
+- **WHEN** population snapshots from multiple different ticks exist in storage
+- **THEN** listing snapshots for one specific tick SHALL return only the snapshot recorded at that tick
+
 ### Requirement: Frozen simulation configuration is recorded once
 The system SHALL store a single frozen-configuration record per database, written once when a population is first created, containing every configuration field never expected to change across that population's lifetime. This record also carries a `simulation_id` — a unique identifier assigned once at that same moment, used to identify this population's data across separate simulation databases.
 

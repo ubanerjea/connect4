@@ -11,12 +11,14 @@ Every simulation run lives in its own SQLite file (Phase 5's "one database file 
 ## Scope
 
 **In scope:**
-1. Plotting scripts (`analytics/plots.py`, `matplotlib` + optional `pandas`) against a single run's database — the original plan §9 scope: population fitness over time, baseline benchmark win-rate over time, population size over time, gene drift (avg lifespan / mutation rate), and a lineage walk for a standout agent.
+1. A plotting CLI (`analytics/plots.py`, `matplotlib` + `pandas`), invoked as `python -m evoconnect4.analytics.plots --db <path> --out-dir <dir>`, generating one PNG per chart into `--out-dir` against a single run's database — four of plan §9's five charts: population fitness over time, baseline benchmark win-rate over time, population size over time, and gene drift (avg lifespan / mutation rate). The fitness and win-rate charts overlay a `pandas`-computed rolling-average trend line on the raw (expectedly noisy, per plan §5) series. The fifth, lineage walk, is deferred — see Out of scope.
 2. A catalog ETL step that scans a directory of run databases and rolls up **aggregate-only** data — never the heavy per-run tables — into a shared `data/analytics.db`, tagged by `simulation_id`.
 3. Idempotent re-cataloging: running the catalog step again only inserts/refreshes runs that are new or have advanced further (more ticks) since they were last cataloged; it never duplicates rows.
 4. A `simulations` master table in `analytics.db` — one row per cataloged run, combining that run's frozen config, its initial (tick-0) mutable config, and bookkeeping fields (source path, last-cataloged tick, catalog timestamp) — so a single `WHERE`/`GROUP BY` over `simulations` filters or buckets runs by any config value.
 
 **Out of scope:**
+- **Lineage walk** (plan §9's fifth chart, explicitly marked "nice-to-have" there): a family-tree render is a genuinely different kind of visualization from the other four (graph/DAG layout, not a time series — crossover gives every agent two parents, so it's a DAG, not a strict tree, and needs a depth/breadth cap to stay readable on a population of any real size). Deferred rather than built half-heartedly; a future extension.
+- Pre-built cross-run comparison scripts against `analytics.db` (e.g., "average final win-rate grouped by `tournament_size`") — the catalog's own DoD is that `analytics.db` is shaped for this kind of `pandas` one-liner (flat `simulations` table, tidy rollup tables), not that Phase 7 ships specific pre-baked comparison reports for questions nobody's asked yet.
 - Copying `agents` or `games` into the shared database — these stay in each run's own file, reachable via `ATTACH` for the rare case a cross-run comparison needs per-agent or per-game detail (e.g. "show me the actual best agent's lineage from run X"). The catalog is for trend/aggregate comparison across runs, not a full data warehouse.
 - Rolling up the full `simulation_config_history` (every mid-run config change) into the catalog — only the tick-0 initial config is captured per run. A user who needs a specific run's full config-change history can `ATTACH` that one file directly; that's already a cheap, well-supported operation and duplicating it into the shared DB buys little for a project at this scale.
 - Automatically running the catalog step as part of every `run_simulation.py` invocation — it is a separate, explicit step (its own script/CLI command), decoupled from a run's own write path and safe to skip, re-run, or run against a whole directory of old runs at once.
@@ -60,6 +62,25 @@ Three deliberate constraints shape this design, each chosen to avoid a specific 
 | times, without duplicate rows.                                    |
 +------------------------------------------------------------------+
 ```
+
+## Design: `plots.py`
+
+Each of the four charts is built from two functions, not one, so the chart's underlying data is independently testable without asserting on rendered pixels:
+
+```
+def fitness_over_time(repo) -> list[tuple[int, float, float, float]]:
+    -- (tick, avg_fitness, max_fitness, min_fitness), one row per
+    -- population_snapshots row -- plain data, ordinary unit-testable
+    -- assertions (e.g. "tick 10's row has the values inserted at tick 10")
+
+def plot_fitness_over_time(data, out_path) -> None:
+    -- pandas.Series(...).rolling(window).mean() over avg_fitness for the
+    -- smoothed trend line, overlaid on the raw series; matplotlib renders
+    -- both to out_path. Covered only by a smoke test: runs without error,
+    -- produces a nonzero-size PNG file.
+```
+
+The same split applies to the other three charts (`population_size_over_time`, `benchmark_win_rate_over_time` -- one rolling-smoothed line per `opponent_type`, `gene_drift_over_time` -- avg lifespan and avg mutation rate as two lines). `plots.py`'s CLI entry point (`python -m evoconnect4.analytics.plots --db <path> --out-dir <dir>`) calls all four extraction+render pairs against the given run's `Repository` and writes one PNG per chart into `--out-dir` (created if missing).
 
 ## New storage: `data/analytics.db`
 
@@ -135,7 +156,9 @@ Read access to each source file uses SQLite's `ATTACH DATABASE` (or a plain seco
 
 ## Definition of done
 
-- Matches plan §11's Phase 7 DoD for plotting: the charts described in plan §9 (population fitness, benchmark win-rate, population size, gene drift, lineage) generate correctly from a single completed run's database.
+- Matches plan §11's Phase 7 DoD for plotting: the four in-scope charts (population fitness, benchmark win-rate, population size, gene drift) generate correctly from a single completed run's database.
+- `python -m evoconnect4.analytics.plots --db <path> --out-dir <dir>` produces four nonzero-size PNG files in `--out-dir`.
+- Each chart's data-extraction function is independently unit-tested against a `Repository` fixture, without invoking `matplotlib`.
 - Running the catalog step against a directory containing two or more run databases produces a queryable `analytics.db` whose `simulations` table has one row per run, and whose rollup tables let a single query (e.g. average final benchmark win-rate grouped by `tournament_size`) compare across those runs without `ATTACH`.
 - Running the catalog step twice against the same, unchanged set of run databases is a no-op the second time (no duplicate or changed rows).
 - Cataloging a run, advancing it further (more ticks via a Phase 5 resume), then re-cataloging picks up only the newly-added snapshot/benchmark rows and updates `last_cataloged_tick` — it does not duplicate the rows already cataloged.
@@ -144,7 +167,7 @@ Read access to each source file uses SQLite's `ATTACH DATABASE` (or a plain seco
 
 ## Dependencies
 
-Builds on Phase 5's `simulation_config.simulation_id` (the stable key this phase's idempotency and joins are keyed on — without it, the catalog would have to fall back to file paths, which break under renames) and Phase 6's `benchmark_results` (the catalog rolls it up; before Phase 6 lands, that rollup table would simply stay empty). No new external dependency beyond what plan §7 already lists for analytics (`matplotlib`, optional `pandas`) — the catalog step itself needs only stdlib `sqlite3`.
+Builds on Phase 5's `simulation_config.simulation_id` (the stable key this phase's idempotency and joins are keyed on — without it, the catalog would have to fall back to file paths, which break under renames) and Phase 6's `benchmark_results` (the catalog rolls it up; before Phase 6 lands, that rollup table would simply stay empty). New external dependencies: `matplotlib` and `pandas` (plan §7 already anticipates both), added to `pyproject.toml` — `pandas` is a real dependency, not optional, used for the rolling-average smoothing in `plots.py` today and available for ad hoc cross-run analysis against `analytics.db` later (see the design conversation that produced this document for use cases considered). The catalog step itself needs only stdlib `sqlite3`.
 
 ## Known limitations
 

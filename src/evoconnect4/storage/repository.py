@@ -238,6 +238,15 @@ class Repository:
         ).fetchone()
         return dict(row) if row else None
 
+    def list_snapshots(self, *, tick: int | None = None) -> list[dict[str, Any]]:
+        if tick is None:
+            rows = self.conn.execute("SELECT * FROM population_snapshots ORDER BY tick").fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM population_snapshots WHERE tick = ? ORDER BY tick", (tick,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # -- simulation config / history / state -------------------------------
 
     def insert_simulation_config(

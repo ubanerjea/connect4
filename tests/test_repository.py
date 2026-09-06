@@ -493,3 +493,42 @@ def test_list_benchmark_results_filters_by_tick():
 
     tick_10_results = repo.list_benchmark_results(tick=10)
     assert {r["benchmark_id"] for r in tick_10_results} == {tick_10_id}
+
+
+# -- 8.1 list_snapshots --------------------------------------------------------
+
+
+def test_list_snapshots_returns_all_in_tick_order():
+    repo = _repo()
+    best = _insert_agent(repo)
+    kwargs = dict(
+        population_size=100, avg_fitness=0.5, max_fitness=0.9, min_fitness=0.1,
+        avg_lifespan=120.0, avg_mutation_rate=0.15, best_agent_id=best,
+    )
+
+    id_5 = repo.insert_snapshot(tick=5, **kwargs)
+    id_1 = repo.insert_snapshot(tick=1, **kwargs)
+    id_3 = repo.insert_snapshot(tick=3, **kwargs)
+
+    snapshots = repo.list_snapshots()
+    assert [s["snapshot_id"] for s in snapshots] == [id_1, id_3, id_5]
+
+
+def test_list_snapshots_filters_by_tick():
+    repo = _repo()
+    best = _insert_agent(repo)
+    kwargs = dict(
+        population_size=100, avg_fitness=0.5, max_fitness=0.9, min_fitness=0.1,
+        avg_lifespan=120.0, avg_mutation_rate=0.15, best_agent_id=best,
+    )
+
+    tick_5_id = repo.insert_snapshot(tick=5, **kwargs)
+    repo.insert_snapshot(tick=10, **kwargs)
+
+    tick_5_snapshots = repo.list_snapshots(tick=5)
+    assert {s["snapshot_id"] for s in tick_5_snapshots} == {tick_5_id}
+
+
+def test_list_snapshots_returns_empty_list_when_none_exist():
+    repo = _repo()
+    assert repo.list_snapshots() == []
