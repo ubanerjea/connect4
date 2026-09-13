@@ -10,6 +10,18 @@ Evolving neural-network agents to play Connect Four using a genetic algorithm �
 - **Fitness**: win rate within the population, cross-checked periodically against two fixed baseline opponents (a random mover and a simple heuristic bot) so genuine progress can be told apart from the population just getting better at beating itself.
 - **Storage**: everything — every agent, every game, every birth and death, every population snapshot — is written to a SQLite database as it happens, so a run is a complete, queryable history afterward. Each run lives in its own database file.
 
+### What happens each tick
+
+A tick is one round of activity across the whole population — not a fixed amount of real time or a fixed number of games. There's no synchronized "generation"; reproduction and death are individual, per-agent countdowns happening within the shared loop:
+
+1. **Pair & play** — alive agents are shuffled and paired up (one sits out if the count is odd); each pair plays a few games, alternating who moves first.
+2. **Recompute fitness** — every agent's win rate is updated from the games just played.
+3. **Reproduce or die**, per agent — an agent reproduces once enough games have passed since its last reproduction (fitter agents reproduce more often, via a shorter interval); an agent dies once it's played as many games as its own lifespan allows. Reproduction that pushes the population over capacity triggers culling of the lowest-fitness agents.
+4. **Benchmark** (every `benchmark_every_n_ticks`) — the current best agent plays the two fixed baseline bots, without affecting anyone's official stats.
+5. **Snapshot** — population size and fitness stats for this tick are recorded.
+
+Everything from the tick is committed to the database in one batch at the end.
+
 The full design rationale lives in [`plans/evoconnect4_project_plan.md`](plans/evoconnect4_project_plan.md); phase-by-phase implementation history is in `openspec/changes/archive/`.
 
 ## Setup
@@ -88,13 +100,32 @@ uv run python -m evoconnect4.analytics.plots --db data/mygame.db --out-dir chart
 
 Generates population fitness, benchmark win-rate, population size, and gene-drift charts as PNGs.
 
-Rolling up multiple runs into one queryable, comparable database:
+## Managing runs
+
+**Catalog runs** into one comparable database (safe to re-run — skips already-cataloged runs, picks up resumed ones incrementally):
 
 ```
 uv run python -m evoconnect4.analytics.catalog --runs-dir data/ --analytics-db data/analytics.db
 ```
 
-Safe to re-run any time — already-cataloged runs are skipped, and runs that have advanced further (via resume) are picked up incrementally.
+**Delete a run** you no longer want (each run is a fully self-contained file, safe to remove any time):
+
+```
+rm data/mygame.db
+```
+
+**View a cataloged run's benchmark results** — first find its `simulation_id`, then query:
+
+```
+sqlite3 data/analytics.db "SELECT simulation_id, source_db_path FROM simulations"
+sqlite3 data/analytics.db "SELECT tick, opponent_type, win_rate FROM simulation_benchmark_results WHERE simulation_id='<id>' ORDER BY tick"
+```
+
+**Remove a run from the catalog** (e.g. after deleting its `.db` file — the catalog doesn't do this automatically):
+
+```
+sqlite3 data/analytics.db "DELETE FROM simulation_benchmark_results WHERE simulation_id='<id>'; DELETE FROM simulation_population_snapshots WHERE simulation_id='<id>'; DELETE FROM simulations WHERE simulation_id='<id>';"
+```
 
 ## Development
 
