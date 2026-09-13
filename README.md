@@ -90,6 +90,12 @@ To find a specific agent's id rather than using `best-alive`/`best-ever`:
 sqlite3 data/mygame.db "SELECT agent_id, fitness, status FROM agents ORDER BY fitness DESC LIMIT 10"
 ```
 
+Or with Python, if you don't have the `sqlite3` CLI installed:
+
+```
+uv run python -c "import sqlite3; [print(r) for r in sqlite3.connect('data/mygame.db').execute('SELECT agent_id, fitness, status FROM agents ORDER BY fitness DESC LIMIT 10')]"
+```
+
 ## Analytics
 
 Charts from a single run:
@@ -121,10 +127,36 @@ sqlite3 data/analytics.db "SELECT simulation_id, source_db_path FROM simulations
 sqlite3 data/analytics.db "SELECT tick, opponent_type, win_rate FROM simulation_benchmark_results WHERE simulation_id='<id>' ORDER BY tick"
 ```
 
+Or with Python:
+
+```
+uv run python -c "import sqlite3; [print(r) for r in sqlite3.connect('data/analytics.db').execute('SELECT simulation_id, source_db_path FROM simulations')]"
+uv run python -c "
+import sqlite3
+conn = sqlite3.connect('data/analytics.db')
+for row in conn.execute('SELECT tick, opponent_type, win_rate FROM simulation_benchmark_results WHERE simulation_id = ? ORDER BY tick', ('<id>',)):
+    print(row)
+"
+```
+
 **Remove a run from the catalog** (e.g. after deleting its `.db` file — the catalog doesn't do this automatically):
 
 ```
 sqlite3 data/analytics.db "DELETE FROM simulation_benchmark_results WHERE simulation_id='<id>'; DELETE FROM simulation_population_snapshots WHERE simulation_id='<id>'; DELETE FROM simulations WHERE simulation_id='<id>';"
+```
+
+Or with Python:
+
+```
+uv run python -c "
+import sqlite3
+conn = sqlite3.connect('data/analytics.db')
+sim_id = '<id>'
+conn.execute('DELETE FROM simulation_benchmark_results WHERE simulation_id = ?', (sim_id,))
+conn.execute('DELETE FROM simulation_population_snapshots WHERE simulation_id = ?', (sim_id,))
+conn.execute('DELETE FROM simulations WHERE simulation_id = ?', (sim_id,))
+conn.commit()
+"
 ```
 
 ## Development

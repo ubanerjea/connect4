@@ -45,6 +45,10 @@ class Config:
     benchmark_every_n_ticks: int
     benchmark_games_per_opponent: int
 
+    heuristic_games_per_agent_per_tick: int
+    heuristic_survival_alpha: float
+    heuristic_fitness_weight: float
+
     random_seed: int
 
 
@@ -75,5 +79,8 @@ def load_config(path: Path | str = _DEFAULT_CONFIG_PATH) -> Config:
         cull_allow_immature_offspring=raw["cull_allow_immature_offspring"],
         benchmark_every_n_ticks=raw["benchmark_every_n_ticks"],
         benchmark_games_per_opponent=raw["benchmark_games_per_opponent"],
+        heuristic_games_per_agent_per_tick=raw["heuristic_games_per_agent_per_tick"],
+        heuristic_survival_alpha=raw["heuristic_survival_alpha"],
+        heuristic_fitness_weight=raw["heuristic_fitness_weight"],
         random_seed=raw["random_seed"],
     )

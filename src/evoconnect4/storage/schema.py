@@ -26,7 +26,14 @@ CREATE TABLE IF NOT EXISTS agents (
     fitness REAL NOT NULL,
     games_since_last_reproduction INTEGER NOT NULL,
     offspring_count INTEGER NOT NULL,
-    parent_avg_fitness REAL NOT NULL DEFAULT 0.0
+    parent_avg_fitness REAL NOT NULL DEFAULT 0.0,
+    peer_wins INTEGER NOT NULL DEFAULT 0,
+    peer_draws INTEGER NOT NULL DEFAULT 0,
+    peer_games_played INTEGER NOT NULL DEFAULT 0,
+    heuristic_wins INTEGER NOT NULL DEFAULT 0,
+    heuristic_draws INTEGER NOT NULL DEFAULT 0,
+    heuristic_games_played INTEGER NOT NULL DEFAULT 0,
+    heuristic_survival_credit REAL NOT NULL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS games (
@@ -91,7 +98,10 @@ CREATE TABLE IF NOT EXISTS simulation_config_history (
     cull_fraction_range TEXT NOT NULL,
     cull_fraction_beta_a REAL NOT NULL,
     cull_fraction_beta_b REAL NOT NULL,
-    cull_allow_immature_offspring INTEGER NOT NULL
+    cull_allow_immature_offspring INTEGER NOT NULL,
+    heuristic_games_per_agent_per_tick INTEGER NOT NULL DEFAULT 0,
+    heuristic_survival_alpha REAL NOT NULL DEFAULT 0.5,
+    heuristic_fitness_weight REAL NOT NULL DEFAULT 0.7
 );
 
 CREATE TABLE IF NOT EXISTS simulation_state (
@@ -111,5 +121,27 @@ CREATE INDEX IF NOT EXISTS idx_simulation_config_history_tick ON simulation_conf
 """
 
 
+_AGENT_MIGRATIONS = [
+    "ALTER TABLE agents ADD COLUMN peer_wins INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN peer_draws INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN peer_games_played INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN heuristic_wins INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN heuristic_draws INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN heuristic_games_played INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN heuristic_survival_credit REAL NOT NULL DEFAULT 0.0",
+]
+
+_HISTORY_MIGRATIONS = [
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_games_per_agent_per_tick INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_survival_alpha REAL NOT NULL DEFAULT 0.5",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_fitness_weight REAL NOT NULL DEFAULT 0.7",
+]
+
+
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    for stmt in _AGENT_MIGRATIONS + _HISTORY_MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # column already exists

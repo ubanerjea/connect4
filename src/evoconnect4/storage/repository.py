@@ -66,6 +66,13 @@ class Repository:
         death_tick: int | None = None,
         death_cause: str | None = None,
         parent_avg_fitness: float = 0.0,
+        peer_wins: int = 0,
+        peer_draws: int = 0,
+        peer_games_played: int = 0,
+        heuristic_wins: int = 0,
+        heuristic_draws: int = 0,
+        heuristic_games_played: int = 0,
+        heuristic_survival_credit: float = 0.0,
     ) -> int:
         cursor = self.conn.execute(
             """
@@ -74,8 +81,10 @@ class Repository:
                 status, death_cause, nn_weights, nn_architecture, lifespan,
                 mutation_rate, crossover_rate, games_played, wins, losses,
                 draws, fitness, games_since_last_reproduction, offspring_count,
-                parent_avg_fitness
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                parent_avg_fitness, peer_wins, peer_draws, peer_games_played,
+                heuristic_wins, heuristic_draws, heuristic_games_played,
+                heuristic_survival_credit
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 parent1_id,
@@ -98,6 +107,13 @@ class Repository:
                 games_since_last_reproduction,
                 offspring_count,
                 parent_avg_fitness,
+                peer_wins,
+                peer_draws,
+                peer_games_played,
+                heuristic_wins,
+                heuristic_draws,
+                heuristic_games_played,
+                heuristic_survival_credit,
             ),
         )
         return cursor.lastrowid
@@ -116,15 +132,32 @@ class Repository:
         draws: int,
         fitness: float,
         games_since_last_reproduction: int,
+        peer_wins: int = 0,
+        peer_draws: int = 0,
+        peer_games_played: int = 0,
+        heuristic_wins: int = 0,
+        heuristic_draws: int = 0,
+        heuristic_games_played: int = 0,
+        heuristic_survival_credit: float = 0.0,
     ) -> None:
         self.conn.execute(
             """
             UPDATE agents
             SET games_played = ?, wins = ?, losses = ?, draws = ?, fitness = ?,
-                games_since_last_reproduction = ?
+                games_since_last_reproduction = ?,
+                peer_wins = ?, peer_draws = ?, peer_games_played = ?,
+                heuristic_wins = ?, heuristic_draws = ?, heuristic_games_played = ?,
+                heuristic_survival_credit = ?
             WHERE agent_id = ?
             """,
-            (games_played, wins, losses, draws, fitness, games_since_last_reproduction, agent_id),
+            (
+                games_played, wins, losses, draws, fitness,
+                games_since_last_reproduction,
+                peer_wins, peer_draws, peer_games_played,
+                heuristic_wins, heuristic_draws, heuristic_games_played,
+                heuristic_survival_credit,
+                agent_id,
+            ),
         )
 
     def mark_agent_dead(self, agent_id: int, death_tick: int, death_cause: str) -> None:
@@ -154,18 +187,24 @@ class Repository:
         game_type: str,
         opponent_label: str | None = None,
     ) -> int:
+        _NON_EVOLUTION_TYPES = {"benchmark", "human_vs_agent", "evolution_heuristic"}
         if game_type == "evolution":
             if player2_agent_id is None or opponent_label is not None:
                 raise ValueError(
                     "game_type='evolution' requires both player1_agent_id and "
                     "player2_agent_id set, and no opponent_label"
                 )
-        else:
+        elif game_type in _NON_EVOLUTION_TYPES:
             if player1_agent_id is None or player2_agent_id is not None or opponent_label is None:
                 raise ValueError(
                     f"game_type={game_type!r} requires player1_agent_id set (the agent), "
                     "player2_agent_id unset, and an opponent_label"
                 )
+        else:
+            raise ValueError(
+                f"game_type={game_type!r} is not a recognised game type; "
+                f"expected 'evolution' or one of {sorted(_NON_EVOLUTION_TYPES)}"
+            )
 
         cursor = self.conn.execute(
             """
@@ -298,6 +337,9 @@ class Repository:
         cull_fraction_beta_a: float,
         cull_fraction_beta_b: float,
         cull_allow_immature_offspring: bool,
+        heuristic_games_per_agent_per_tick: int = 0,
+        heuristic_survival_alpha: float = 0.5,
+        heuristic_fitness_weight: float = 0.7,
     ) -> int:
         cursor = self.conn.execute(
             """
@@ -309,8 +351,10 @@ class Repository:
                 games_per_pair_per_tick, benchmark_every_n_ticks,
                 benchmark_games_per_opponent, random_seed, cull_fraction_range,
                 cull_fraction_beta_a, cull_fraction_beta_b,
-                cull_allow_immature_offspring
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cull_allow_immature_offspring,
+                heuristic_games_per_agent_per_tick, heuristic_survival_alpha,
+                heuristic_fitness_weight
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tick,
@@ -332,6 +376,9 @@ class Repository:
                 cull_fraction_beta_a,
                 cull_fraction_beta_b,
                 int(cull_allow_immature_offspring),
+                heuristic_games_per_agent_per_tick,
+                heuristic_survival_alpha,
+                heuristic_fitness_weight,
             ),
         )
         return cursor.lastrowid

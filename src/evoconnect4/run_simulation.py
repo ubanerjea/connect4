@@ -40,6 +40,9 @@ MUTABLE_FIELDS = (
     "cull_fraction_beta_a",
     "cull_fraction_beta_b",
     "cull_allow_immature_offspring",
+    "heuristic_games_per_agent_per_tick",
+    "heuristic_survival_alpha",
+    "heuristic_fitness_weight",
 )
 _MUTABLE_FIELDS_EXCLUDING_SEED = tuple(f for f in MUTABLE_FIELDS if f != "random_seed")
 

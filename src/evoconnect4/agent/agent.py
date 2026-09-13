@@ -49,6 +49,14 @@ class Agent:
         self.fitness = 0.0
         self.games_since_last_reproduction = 0
 
+        self.peer_wins = 0
+        self.peer_draws = 0
+        self.peer_games_played = 0
+        self.heuristic_wins = 0
+        self.heuristic_draws = 0
+        self.heuristic_games_played = 0
+        self.heuristic_survival_credit = 0.0
+
     def choose_move(self, board: Board) -> int:
         x = self._encode(board)
         scores = self.network.forward(x)

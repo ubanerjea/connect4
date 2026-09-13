@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from evoconnect4.agent.genome import decode, encode, random_genome
 from evoconnect4.config import load_config
@@ -58,6 +59,13 @@ def test_insert_agent_round_trips_all_fields():
     assert record["lifespan"] == 100
     assert record["mutation_rate"] == 0.1
     assert record["crossover_rate"] == 0.5
+    assert record["peer_wins"] == 0
+    assert record["peer_draws"] == 0
+    assert record["peer_games_played"] == 0
+    assert record["heuristic_wins"] == 0
+    assert record["heuristic_draws"] == 0
+    assert record["heuristic_games_played"] == 0
+    assert record["heuristic_survival_credit"] == 0.0
 
 
 def test_insert_agent_round_trips_genome_data():
@@ -333,6 +341,9 @@ def _history_kwargs(**overrides) -> dict:
         cull_fraction_beta_a=1.0,
         cull_fraction_beta_b=1.0,
         cull_allow_immature_offspring=False,
+        heuristic_games_per_agent_per_tick=2,
+        heuristic_survival_alpha=0.5,
+        heuristic_fitness_weight=0.7,
     )
     fields.update(overrides)
     return fields
@@ -458,6 +469,106 @@ def test_insert_game_rejects_non_evolution_without_opponent_label():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+# -- 7.3 evolution_heuristic game_type invariant ------------------------------
+
+
+def test_insert_game_accepts_evolution_heuristic_shape():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+
+    game_id = repo.insert_game(
+        tick=5,
+        player1_agent_id=agent_id,
+        player2_agent_id=None,
+        result="player2_win",
+        num_moves=15,
+        move_history=[3, 2, 1],
+        game_type="evolution_heuristic",
+        opponent_label="heuristic",
+    )
+    record = repo.get_game(game_id)
+
+    assert record["player1_agent_id"] == agent_id
+    assert record["player2_agent_id"] is None
+    assert record["game_type"] == "evolution_heuristic"
+    assert record["opponent_label"] == "heuristic"
+
+
+def test_insert_game_rejects_evolution_heuristic_with_second_agent_id():
+    repo = _repo()
+    p1 = _insert_agent(repo)
+    p2 = _insert_agent(repo)
+
+    try:
+        repo.insert_game(
+            tick=1, player1_agent_id=p1, player2_agent_id=p2,
+            result="player1_win", num_moves=1, move_history=[0],
+            game_type="evolution_heuristic", opponent_label="heuristic",
+        )
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+# -- 7.4 heuristic-track counter round-trip ------------------------------------
+
+
+def test_insert_agent_heuristic_track_counters_round_trip():
+    repo = _repo()
+    agent_id = repo.insert_agent(
+        parent1_id=None, parent2_id=None, generation=0, birth_tick=0, status="alive",
+        nn_weights=[0.1], nn_architecture=[24], lifespan=100, mutation_rate=0.1,
+        crossover_rate=0.5,
+        peer_wins=3, peer_draws=1, peer_games_played=5,
+        heuristic_wins=2, heuristic_draws=0, heuristic_games_played=4,
+        heuristic_survival_credit=0.35,
+    )
+    record = repo.get_agent(agent_id)
+
+    assert record["peer_wins"] == 3
+    assert record["peer_draws"] == 1
+    assert record["peer_games_played"] == 5
+    assert record["heuristic_wins"] == 2
+    assert record["heuristic_draws"] == 0
+    assert record["heuristic_games_played"] == 4
+    assert record["heuristic_survival_credit"] == pytest.approx(0.35)
+
+
+def test_update_agent_stats_persists_heuristic_track_counters():
+    repo = _repo()
+    agent_id = _insert_agent(repo)
+
+    repo.update_agent_stats(
+        agent_id,
+        games_played=10, wins=4, losses=4, draws=2, fitness=0.5,
+        games_since_last_reproduction=6,
+        peer_wins=4, peer_draws=2, peer_games_played=8,
+        heuristic_wins=1, heuristic_draws=0, heuristic_games_played=2,
+        heuristic_survival_credit=0.18,
+    )
+    record = repo.get_agent(agent_id)
+
+    assert record["peer_wins"] == 4
+    assert record["peer_draws"] == 2
+    assert record["peer_games_played"] == 8
+    assert record["heuristic_wins"] == 1
+    assert record["heuristic_games_played"] == 2
+    assert record["heuristic_survival_credit"] == pytest.approx(0.18)
+
+
+def test_list_agents_includes_heuristic_track_columns():
+    repo = _repo()
+    _insert_agent(repo)
+
+    alive = repo.list_agents(status="alive")
+    assert len(alive) == 1
+    record = alive[0]
+    for col in ["peer_wins", "peer_draws", "peer_games_played",
+                "heuristic_wins", "heuristic_draws", "heuristic_games_played",
+                "heuristic_survival_credit"]:
+        assert col in record, f"column {col!r} missing from list_agents result"
 
 
 # -- 7.2 benchmark_results round trip / listing ------------------------------

@@ -75,6 +75,13 @@ class Population:
             agent.draws = record["draws"]
             agent.fitness = record["fitness"]
             agent.games_since_last_reproduction = record["games_since_last_reproduction"]
+            agent.peer_wins = record["peer_wins"]
+            agent.peer_draws = record["peer_draws"]
+            agent.peer_games_played = record["peer_games_played"]
+            agent.heuristic_wins = record["heuristic_wins"]
+            agent.heuristic_draws = record["heuristic_draws"]
+            agent.heuristic_games_played = record["heuristic_games_played"]
+            agent.heuristic_survival_credit = record["heuristic_survival_credit"]
             population.alive.append(agent)
 
         state = repo.get_simulation_state()
@@ -86,6 +93,8 @@ class Population:
 
         for agent_a, agent_b in self._pair_alive():
             self._play_pair(agent_a, agent_b)
+
+        self._run_heuristic_challenges()
 
         self._recompute_fitness()
 
@@ -161,18 +170,24 @@ class Population:
         if result.winner == 1:
             db_result = "player1_win"
             agent_a.wins += 1
+            agent_a.peer_wins += 1
             agent_b.losses += 1
         elif result.winner == -1:
             db_result = "player2_win"
             agent_a.losses += 1
             agent_b.wins += 1
+            agent_b.peer_wins += 1
         else:
             db_result = "draw"
             agent_a.draws += 1
+            agent_a.peer_draws += 1
             agent_b.draws += 1
+            agent_b.peer_draws += 1
 
         agent_a.games_played += 1
+        agent_a.peer_games_played += 1
         agent_b.games_played += 1
+        agent_b.peer_games_played += 1
         agent_a.games_since_last_reproduction += 1
         agent_b.games_since_last_reproduction += 1
 
@@ -197,12 +212,28 @@ class Population:
             draws=agent.draws,
             fitness=agent.fitness,
             games_since_last_reproduction=agent.games_since_last_reproduction,
+            peer_wins=agent.peer_wins,
+            peer_draws=agent.peer_draws,
+            peer_games_played=agent.peer_games_played,
+            heuristic_wins=agent.heuristic_wins,
+            heuristic_draws=agent.heuristic_draws,
+            heuristic_games_played=agent.heuristic_games_played,
+            heuristic_survival_credit=agent.heuristic_survival_credit,
         )
 
     def _recompute_fitness(self) -> None:
+        beta = self.config.heuristic_fitness_weight
         for agent in self.alive:
-            if agent.games_played > 0:
-                agent.fitness = (agent.wins + 0.5 * agent.draws) / agent.games_played
+            peer_fitness = (
+                (agent.peer_wins + 0.5 * agent.peer_draws) / agent.peer_games_played
+                if agent.peer_games_played > 0 else 0.0
+            )
+            heuristic_fitness = (
+                (agent.heuristic_wins + 0.5 * agent.heuristic_draws + agent.heuristic_survival_credit)
+                / agent.heuristic_games_played
+                if agent.heuristic_games_played > 0 else 0.0
+            )
+            agent.fitness = (1 - beta) * peer_fitness + beta * heuristic_fitness
             self._persist_stats(agent)
 
     def _tournament_select(self, exclude: Agent) -> Agent | None:
@@ -272,6 +303,49 @@ class Population:
     def _kill(self, agent: Agent, *, cause: str) -> None:
         self.repo.mark_agent_dead(agent.agent_id, death_tick=self.tick, death_cause=cause)
         self.alive.remove(agent)
+
+    def _run_heuristic_challenges(self) -> None:
+        n = self.config.heuristic_games_per_agent_per_tick
+        if n <= 0 or not self.alive:
+            return
+
+        bound_heuristic = functools.partial(heuristic_bot, rng=self.rng)
+        board_cells = self.config.board_columns * self.config.board_rows
+        alpha = self.config.heuristic_survival_alpha
+
+        for agent in self.alive:
+            for i in range(n):
+                first_mover = 1 if i % 2 == 0 else -1
+                result = play_match(agent.choose_move, bound_heuristic, first_mover=first_mover)
+
+                if result.winner == 1:
+                    db_result = "player1_win"
+                    agent.heuristic_wins += 1
+                    agent.wins += 1
+                elif result.winner == -1:
+                    db_result = "player2_win"
+                    agent.heuristic_survival_credit += alpha * result.num_moves / board_cells
+                    agent.losses += 1
+                else:
+                    db_result = "draw"
+                    agent.heuristic_draws += 1
+                    agent.draws += 1
+
+                agent.heuristic_games_played += 1
+                agent.games_played += 1
+                agent.games_since_last_reproduction += 1
+
+                self.repo.insert_game(
+                    tick=self.tick,
+                    player1_agent_id=agent.agent_id,
+                    player2_agent_id=None,
+                    result=db_result,
+                    num_moves=result.num_moves,
+                    move_history=result.move_history,
+                    game_type="evolution_heuristic",
+                    opponent_label="heuristic",
+                )
+                self._persist_stats(agent)
 
     def _run_benchmark(self) -> None:
         if self.tick % self.config.benchmark_every_n_ticks != 0:

@@ -1,10 +1,12 @@
 import dataclasses
+import json
 
 import numpy as np
 
 from evoconnect4.agent.genome import random_genome
 from evoconnect4.config import load_config
 from evoconnect4.evolution.population import Population, reproduction_interval
+from evoconnect4.game.match import MatchResult
 from evoconnect4.storage.repository import Repository
 
 BASE_CONFIG = load_config()
@@ -111,10 +113,11 @@ def test_game_stats_are_updated_in_memory_and_persisted():
 
     pop.run_tick()
 
+    expected_games = config.games_per_pair_per_tick + config.heuristic_games_per_agent_per_tick
     for agent in pop.alive:
-        assert agent.games_played == 2
+        assert agent.games_played == expected_games
         record = repo.get_agent(agent.agent_id)
-        assert record["games_played"] == 2
+        assert record["games_played"] == expected_games
         assert record["wins"] == agent.wins
         assert record["losses"] == agent.losses
         assert record["draws"] == agent.draws
@@ -131,8 +134,18 @@ def test_fitness_recomputed_matches_formula():
 
     pop.run_tick()
 
+    beta = config.heuristic_fitness_weight
     for agent in pop.alive:
-        expected = (agent.wins + 0.5 * agent.draws) / agent.games_played
+        peer_fit = (
+            (agent.peer_wins + 0.5 * agent.peer_draws) / agent.peer_games_played
+            if agent.peer_games_played > 0 else 0.0
+        )
+        h_fit = (
+            (agent.heuristic_wins + 0.5 * agent.heuristic_draws + agent.heuristic_survival_credit)
+            / agent.heuristic_games_played
+            if agent.heuristic_games_played > 0 else 0.0
+        )
+        expected = (1 - beta) * peer_fit + beta * h_fit
         assert np.isclose(agent.fitness, expected)
         record = repo.get_agent(agent.agent_id)
         assert np.isclose(record["fitness"], expected)
@@ -640,16 +653,202 @@ def test_benchmark_games_do_not_affect_agent_official_record():
     pop.run_tick()
 
     best = max(pop.alive, key=lambda a: a.fitness)
-    # 4 agents, no odd one out -- every agent plays exactly games_per_pair_per_tick
-    # evolution games this tick; the 2 * benchmark_games_per_opponent = 12 benchmark
-    # games the best agent also played this tick must not be counted on top of that
-    assert best.games_played == config.games_per_pair_per_tick
+    # 4 agents: each plays games_per_pair_per_tick peer games + heuristic_games_per_agent_per_tick
+    # heuristic challenge games; the 2 * benchmark_games_per_opponent = 12 benchmark
+    # games must not be counted on top of that.
+    expected_games = config.games_per_pair_per_tick + config.heuristic_games_per_agent_per_tick
+    assert best.games_played == expected_games
     record = repo.get_agent(best.agent_id)
-    assert record["games_played"] == config.games_per_pair_per_tick
+    assert record["games_played"] == expected_games
     assert record["wins"] == best.wins
     assert record["losses"] == best.losses
     assert record["draws"] == best.draws
     assert record["fitness"] == best.fitness
+
+
+# -- 12.1 Two-track fitness formula -------------------------------------------
+
+
+def test_two_track_fitness():
+    config = _test_config(population_size=2, heuristic_fitness_weight=0.7)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(40))
+    pop.initialize()
+    agent = pop.alive[0]
+
+    agent.peer_wins = 3
+    agent.peer_draws = 1
+    agent.peer_games_played = 5
+    agent.heuristic_wins = 0
+    agent.heuristic_draws = 0
+    agent.heuristic_games_played = 4
+    agent.heuristic_survival_credit = 0.5
+
+    pop._recompute_fitness()
+
+    peer_fit = (3 + 0.5 * 1) / 5
+    h_fit = (0 + 0.5 * 0 + 0.5) / 4
+    expected = 0.3 * peer_fit + 0.7 * h_fit
+    assert np.isclose(agent.fitness, expected)
+    record = repo.get_agent(agent.agent_id)
+    assert np.isclose(record["fitness"], expected)
+
+
+def test_two_track_fitness_zero_peer_games():
+    config = _test_config(population_size=2, heuristic_fitness_weight=0.7)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(41))
+    pop.initialize()
+    agent = pop.alive[0]
+
+    agent.peer_games_played = 0
+    agent.heuristic_wins = 1
+    agent.heuristic_games_played = 2
+
+    pop._recompute_fitness()
+
+    expected = 0.7 * (1.0 / 2.0)
+    assert np.isclose(agent.fitness, expected)
+
+
+# -- 12.2 Heuristic challenge game count --------------------------------------
+
+
+def test_heuristic_challenges_game_count():
+    config = _test_config(population_size=5, heuristic_games_per_agent_per_tick=2,
+                          benchmark_every_n_ticks=100)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(50))
+    pop.initialize()
+    n_agents = len(pop.alive)
+
+    pop.tick = 1
+    pop._run_heuristic_challenges()
+
+    for agent in pop.alive:
+        assert agent.heuristic_games_played == 2
+
+    heuristic_games = [g for g in repo.list_games() if g["game_type"] == "evolution_heuristic"]
+    assert len(heuristic_games) == n_agents * 2
+    for g in heuristic_games:
+        assert g["player2_agent_id"] is None
+        assert g["opponent_label"] == "heuristic"
+        assert g["player1_agent_id"] is not None
+
+
+# -- 12.3 Survival credit on losses only --------------------------------------
+
+
+def test_survival_credit_accrues_on_loss_only():
+    import evoconnect4.evolution.population as pop_module
+
+    config = _test_config(
+        population_size=2, heuristic_games_per_agent_per_tick=2,
+        heuristic_survival_alpha=0.5, benchmark_every_n_ticks=100,
+    )
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(51))
+    pop.initialize()
+    agent = pop.alive[0]
+    pop.tick = 1
+
+    call_count = [0]
+    board_cells = config.board_columns * config.board_rows
+
+    def mock_play_match(chooser1, chooser2, *, first_mover):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # agent (player1) loses, 20 moves
+            return MatchResult(winner=-1, move_history=list(range(20)))
+        else:
+            # agent (player1) wins, 10 moves
+            return MatchResult(winner=1, move_history=list(range(10)))
+
+    original = pop_module.play_match
+    pop_module.play_match = mock_play_match
+    try:
+        pop._run_heuristic_challenges()
+    finally:
+        pop_module.play_match = original
+
+    assert agent.heuristic_wins == 1
+    assert agent.heuristic_draws == 0
+    assert np.isclose(agent.heuristic_survival_credit, 0.5 * 20 / board_cells)
+
+
+# -- 12.4 Disable path --------------------------------------------------------
+
+
+def test_heuristic_disable_no_side_effects():
+    config = _test_config(
+        population_size=4, heuristic_games_per_agent_per_tick=0,
+        benchmark_every_n_ticks=100,
+    )
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(52))
+    pop.initialize()
+
+    pop.run_tick()
+
+    heuristic_games = [g for g in repo.list_games() if g["game_type"] == "evolution_heuristic"]
+    assert heuristic_games == []
+    for agent in pop.alive:
+        assert agent.heuristic_games_played == 0
+        assert agent.heuristic_wins == 0
+        assert agent.heuristic_draws == 0
+        assert agent.heuristic_survival_credit == 0.0
+        beta = config.heuristic_fitness_weight
+        peer_fit = (
+            (agent.peer_wins + 0.5 * agent.peer_draws) / agent.peer_games_played
+            if agent.peer_games_played > 0 else 0.0
+        )
+        expected = (1 - beta) * peer_fit  # heuristic contributes 0.0
+        assert np.isclose(agent.fitness, expected)
+
+
+# -- 12.5 Resume continuity ---------------------------------------------------
+
+
+def test_heuristic_resume_continuity():
+    config = _test_config(
+        population_size=6, heuristic_games_per_agent_per_tick=2,
+        benchmark_every_n_ticks=100,
+    )
+
+    # Continuous 5-tick run
+    repo_cont = Repository(":memory:")
+    pop_cont = Population(config, repo_cont, rng=np.random.default_rng(100))
+    pop_cont.initialize()
+    for _ in range(5):
+        pop_cont.run_tick()
+    repo_cont.upsert_simulation_state(current_tick=pop_cont.tick,
+                                      rng_state='{"marker": "unused"}')
+
+    # Split: 3 ticks, save state, then resume 2 more
+    repo_split = Repository(":memory:")
+    pop_split = Population(config, repo_split, rng=np.random.default_rng(100))
+    pop_split.initialize()
+    for _ in range(3):
+        pop_split.run_tick()
+    rng_state_str = json.dumps(pop_split.rng.bit_generator.state)
+    repo_split.upsert_simulation_state(current_tick=pop_split.tick, rng_state=rng_state_str)
+
+    pop_resumed, saved_rng = Population.load(config, repo_split)
+    rng = np.random.default_rng()
+    rng.bit_generator.state = json.loads(saved_rng)
+    pop_resumed.rng = rng
+    for _ in range(2):
+        pop_resumed.run_tick()
+
+    # Compare alive agent fitness and heuristic counters
+    cont_by_id = {a.agent_id: a for a in pop_cont.alive}
+    for agent in pop_resumed.alive:
+        if agent.agent_id in cont_by_id:
+            orig = cont_by_id[agent.agent_id]
+            assert np.isclose(agent.fitness, orig.fitness), \
+                f"agent {agent.agent_id}: fitness {agent.fitness} != {orig.fitness}"
+            assert agent.heuristic_games_played == orig.heuristic_games_played
+            assert agent.peer_games_played == orig.peer_games_played
 
 
 def test_benchmark_skips_cleanly_on_empty_population():
