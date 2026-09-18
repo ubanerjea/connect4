@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS simulation_state (
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE INDEX IF NOT EXISTS idx_agents_parent1_id ON agents(parent1_id);
 CREATE INDEX IF NOT EXISTS idx_agents_parent2_id ON agents(parent2_id);
+CREATE INDEX IF NOT EXISTS idx_agents_fitness ON agents(fitness);
 CREATE INDEX IF NOT EXISTS idx_games_tick ON games(tick);
 CREATE INDEX IF NOT EXISTS idx_games_player1_agent_id ON games(player1_agent_id);
 CREATE INDEX IF NOT EXISTS idx_games_player2_agent_id ON games(player2_agent_id);

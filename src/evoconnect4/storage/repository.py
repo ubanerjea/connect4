@@ -173,6 +173,22 @@ class Repository:
             rows = self.conn.execute("SELECT * FROM agents WHERE status = ?", (status,)).fetchall()
         return [_row_to_agent(row) for row in rows]
 
+    def get_agent_by_fitness(self, *, status: str | None = None, worst: bool = False) -> dict[str, Any] | None:
+        """Best (or worst) agent by fitness, via the fitness index -- O(log n)
+
+        rather than list_agents()'s full-table scan + deserialize-everything +
+        Python max(), which is what made 'best-ever' over a long run's full
+        agent history slow.
+        """
+        order = "ASC" if worst else "DESC"
+        if status is None:
+            row = self.conn.execute(f"SELECT * FROM agents ORDER BY fitness {order} LIMIT 1").fetchone()
+        else:
+            row = self.conn.execute(
+                f"SELECT * FROM agents WHERE status = ? ORDER BY fitness {order} LIMIT 1", (status,)
+            ).fetchone()
+        return _row_to_agent(row) if row else None
+
     # -- games ------------------------------------------------------------
 
     def insert_game(

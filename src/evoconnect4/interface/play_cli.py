@@ -47,16 +47,16 @@ def select_agent_record(repo: Repository, agent_selector: str) -> dict:
         return record
 
     if agent_selector == "best-alive":
-        candidates = repo.list_agents(status="alive")
-        if not candidates:
+        record = repo.get_agent_by_fitness(status="alive")
+        if record is None:
             raise AgentSelectionError("No alive agents found in this database")
-        return max(candidates, key=lambda a: a["fitness"])
+        return record
 
     if agent_selector == "best-ever":
-        candidates = repo.list_agents()
-        if not candidates:
+        record = repo.get_agent_by_fitness()
+        if record is None:
             raise AgentSelectionError("No agents found in this database")
-        return max(candidates, key=lambda a: a["fitness"])
+        return record
 
     raise AgentSelectionError(
         f"Unrecognized --agent value {agent_selector!r}; expected an integer id, 'best-alive', or 'best-ever'"
