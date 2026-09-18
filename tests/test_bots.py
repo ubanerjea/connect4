@@ -1,6 +1,11 @@
 import numpy as np
 
-from evoconnect4.game.bots import heuristic_bot, random_mover
+from evoconnect4.game.bots import (
+    get_heuristic_bot,
+    heuristic_bot,
+    random_mover,
+    tactical_heuristic_bot,
+)
 from evoconnect4.game.connect_four import Board
 
 
@@ -59,3 +64,42 @@ def test_heuristic_bot_is_deterministic_given_the_same_seeded_rng():
 
     assert sequence_a == sequence_b
     assert all(isinstance(m, int) for m in sequence_a)
+
+
+# -- tactical_heuristic_bot -----------------------------------------------
+
+
+def test_tactical_bot_creates_fork():
+    # Player 1 has pieces at col 1 and col 3 (row 0).
+    # Playing col 2 creates 2 threats: completing 0-1-2-3 and 1-2-3-4.
+    # No immediate win, no 1-ply block, no prior fork for either side.
+    board = Board()
+    board._grid[1] = [1]
+    board._grid[3] = [1]
+    board.current_player = 1
+    assert tactical_heuristic_bot(board) == 2
+
+
+def test_tactical_bot_blocks_opponent_fork():
+    # Opponent (-1) has pieces at col 1 and col 3 (row 0).
+    # Playing col 2 would give opponent 2 threats (completing 0-1-2-3 and 1-2-3-4).
+    # No immediate win, no 1-ply block, player 1 has no own fork.
+    board = Board()
+    board._grid[1] = [-1]
+    board._grid[3] = [-1]
+    board.current_player = 1
+    assert tactical_heuristic_bot(board) == 2
+
+
+def test_get_heuristic_bot_basic_returns_heuristic_bot():
+    assert get_heuristic_bot("basic") is heuristic_bot
+
+
+def test_get_heuristic_bot_tactical_returns_tactical_bot():
+    assert get_heuristic_bot("tactical") is tactical_heuristic_bot
+
+
+def test_get_heuristic_bot_unknown_level_raises():
+    import pytest
+    with pytest.raises(ValueError, match="Unknown heuristic_bot_level"):
+        get_heuristic_bot("super")

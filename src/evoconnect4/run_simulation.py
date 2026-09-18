@@ -42,7 +42,21 @@ MUTABLE_FIELDS = (
     "cull_allow_immature_offspring",
     "heuristic_games_per_agent_per_tick",
     "heuristic_survival_alpha",
-    "heuristic_fitness_weight",
+    "heuristic_bot_level",
+    "heuristic_fitness_weight_max",
+    "heuristic_fitness_weight_min",
+    "heuristic_weight_adapt_low",
+    "heuristic_weight_adapt_high",
+    "heuristic_weight_adapt_window",
+    "hof_enabled",
+    "hof_max_size",
+    "hof_games_per_agent_per_tick",
+    "hof_maintenance_every_n_ticks",
+    "hof_maintenance_heuristic_games",
+    "hof_maintenance_peer_games",
+    "hof_entry_heuristic_threshold",
+    "hof_eviction_margin",
+    "hof_fitness_weight_max",
 )
 _MUTABLE_FIELDS_EXCLUDING_SEED = tuple(f for f in MUTABLE_FIELDS if f != "random_seed")
 

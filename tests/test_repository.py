@@ -343,7 +343,7 @@ def _history_kwargs(**overrides) -> dict:
         cull_allow_immature_offspring=False,
         heuristic_games_per_agent_per_tick=2,
         heuristic_survival_alpha=0.5,
-        heuristic_fitness_weight=0.7,
+        heuristic_fitness_weight_max=0.7,
     )
     fields.update(overrides)
     return fields

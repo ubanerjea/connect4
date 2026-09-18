@@ -73,6 +73,10 @@ class Repository:
         heuristic_draws: int = 0,
         heuristic_games_played: int = 0,
         heuristic_survival_credit: float = 0.0,
+        hof_wins: int = 0,
+        hof_draws: int = 0,
+        hof_games_played: int = 0,
+        hof_survival_credit: float = 0.0,
     ) -> int:
         cursor = self.conn.execute(
             """
@@ -83,8 +87,9 @@ class Repository:
                 draws, fitness, games_since_last_reproduction, offspring_count,
                 parent_avg_fitness, peer_wins, peer_draws, peer_games_played,
                 heuristic_wins, heuristic_draws, heuristic_games_played,
-                heuristic_survival_credit
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                heuristic_survival_credit,
+                hof_wins, hof_draws, hof_games_played, hof_survival_credit
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 parent1_id,
@@ -114,6 +119,10 @@ class Repository:
                 heuristic_draws,
                 heuristic_games_played,
                 heuristic_survival_credit,
+                hof_wins,
+                hof_draws,
+                hof_games_played,
+                hof_survival_credit,
             ),
         )
         return cursor.lastrowid
@@ -139,6 +148,10 @@ class Repository:
         heuristic_draws: int = 0,
         heuristic_games_played: int = 0,
         heuristic_survival_credit: float = 0.0,
+        hof_wins: int = 0,
+        hof_draws: int = 0,
+        hof_games_played: int = 0,
+        hof_survival_credit: float = 0.0,
     ) -> None:
         self.conn.execute(
             """
@@ -147,7 +160,8 @@ class Repository:
                 games_since_last_reproduction = ?,
                 peer_wins = ?, peer_draws = ?, peer_games_played = ?,
                 heuristic_wins = ?, heuristic_draws = ?, heuristic_games_played = ?,
-                heuristic_survival_credit = ?
+                heuristic_survival_credit = ?,
+                hof_wins = ?, hof_draws = ?, hof_games_played = ?, hof_survival_credit = ?
             WHERE agent_id = ?
             """,
             (
@@ -156,6 +170,7 @@ class Repository:
                 peer_wins, peer_draws, peer_games_played,
                 heuristic_wins, heuristic_draws, heuristic_games_played,
                 heuristic_survival_credit,
+                hof_wins, hof_draws, hof_games_played, hof_survival_credit,
                 agent_id,
             ),
         )
@@ -203,14 +218,15 @@ class Repository:
         game_type: str,
         opponent_label: str | None = None,
     ) -> int:
-        _NON_EVOLUTION_TYPES = {"benchmark", "human_vs_agent", "evolution_heuristic"}
-        if game_type == "evolution":
+        _DUAL_AGENT_TYPES = {"evolution", "hof_challenge", "hof_maintenance_peer"}
+        _SINGLE_AGENT_TYPES = {"benchmark", "human_vs_agent", "evolution_heuristic", "hof_maintenance_heuristic"}
+        if game_type in _DUAL_AGENT_TYPES:
             if player2_agent_id is None or opponent_label is not None:
                 raise ValueError(
-                    "game_type='evolution' requires both player1_agent_id and "
+                    f"game_type={game_type!r} requires both player1_agent_id and "
                     "player2_agent_id set, and no opponent_label"
                 )
-        elif game_type in _NON_EVOLUTION_TYPES:
+        elif game_type in _SINGLE_AGENT_TYPES:
             if player1_agent_id is None or player2_agent_id is not None or opponent_label is None:
                 raise ValueError(
                     f"game_type={game_type!r} requires player1_agent_id set (the agent), "
@@ -219,7 +235,7 @@ class Repository:
         else:
             raise ValueError(
                 f"game_type={game_type!r} is not a recognised game type; "
-                f"expected 'evolution' or one of {sorted(_NON_EVOLUTION_TYPES)}"
+                f"expected one of {sorted(_DUAL_AGENT_TYPES | _SINGLE_AGENT_TYPES)}"
             )
 
         cursor = self.conn.execute(
@@ -355,7 +371,21 @@ class Repository:
         cull_allow_immature_offspring: bool,
         heuristic_games_per_agent_per_tick: int = 0,
         heuristic_survival_alpha: float = 0.5,
-        heuristic_fitness_weight: float = 0.7,
+        heuristic_bot_level: str = "tactical",
+        heuristic_fitness_weight_max: float = 0.7,
+        heuristic_fitness_weight_min: float = 0.3,
+        heuristic_weight_adapt_low: float = 0.60,
+        heuristic_weight_adapt_high: float = 0.90,
+        heuristic_weight_adapt_window: int = 20,
+        hof_enabled: bool = True,
+        hof_max_size: int = 20,
+        hof_games_per_agent_per_tick: int = 2,
+        hof_maintenance_every_n_ticks: int = 50,
+        hof_maintenance_heuristic_games: int = 20,
+        hof_maintenance_peer_games: int = 4,
+        hof_entry_heuristic_threshold: float = 0.70,
+        hof_eviction_margin: float = 0.15,
+        hof_fitness_weight_max: float = 0.4,
     ) -> int:
         cursor = self.conn.execute(
             """
@@ -369,8 +399,15 @@ class Repository:
                 cull_fraction_beta_a, cull_fraction_beta_b,
                 cull_allow_immature_offspring,
                 heuristic_games_per_agent_per_tick, heuristic_survival_alpha,
-                heuristic_fitness_weight
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                heuristic_bot_level,
+                heuristic_fitness_weight_max, heuristic_fitness_weight_min,
+                heuristic_weight_adapt_low, heuristic_weight_adapt_high,
+                heuristic_weight_adapt_window,
+                hof_enabled, hof_max_size, hof_games_per_agent_per_tick,
+                hof_maintenance_every_n_ticks, hof_maintenance_heuristic_games,
+                hof_maintenance_peer_games, hof_entry_heuristic_threshold,
+                hof_eviction_margin, hof_fitness_weight_max
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tick,
@@ -394,7 +431,21 @@ class Repository:
                 int(cull_allow_immature_offspring),
                 heuristic_games_per_agent_per_tick,
                 heuristic_survival_alpha,
-                heuristic_fitness_weight,
+                heuristic_bot_level,
+                heuristic_fitness_weight_max,
+                heuristic_fitness_weight_min,
+                heuristic_weight_adapt_low,
+                heuristic_weight_adapt_high,
+                heuristic_weight_adapt_window,
+                int(hof_enabled),
+                hof_max_size,
+                hof_games_per_agent_per_tick,
+                hof_maintenance_every_n_ticks,
+                hof_maintenance_heuristic_games,
+                hof_maintenance_peer_games,
+                hof_entry_heuristic_threshold,
+                hof_eviction_margin,
+                hof_fitness_weight_max,
             ),
         )
         return cursor.lastrowid
@@ -457,3 +508,67 @@ class Repository:
         else:
             rows = self.conn.execute("SELECT * FROM benchmark_results WHERE tick = ?", (tick,)).fetchall()
         return [dict(row) for row in rows]
+
+    def get_rolling_heuristic_win_rate(self, *, window: int) -> float | None:
+        rows = self.conn.execute(
+            """
+            SELECT win_rate FROM benchmark_results
+            WHERE opponent_type = 'heuristic'
+            ORDER BY tick DESC LIMIT ?
+            """,
+            (window,),
+        ).fetchall()
+        if not rows:
+            return None
+        return sum(r["win_rate"] for r in rows) / len(rows)
+
+    # -- hall of fame -------------------------------------------------------
+
+    def insert_hof(
+        self,
+        *,
+        agent_id: int,
+        inducted_tick: int,
+        heuristic_win_rate: float,
+    ) -> int:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO hall_of_fame (agent_id, inducted_tick, status, heuristic_win_rate)
+            VALUES (?, ?, 'active', ?)
+            """,
+            (agent_id, inducted_tick, heuristic_win_rate),
+        )
+        return cursor.lastrowid
+
+    def list_hof_agents(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        if status is None:
+            rows = self.conn.execute("SELECT * FROM hall_of_fame").fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM hall_of_fame WHERE status = ?", (status,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_hof_heuristic_win_rate(self, hof_id: int, win_rate: float) -> None:
+        self.conn.execute(
+            "UPDATE hall_of_fame SET heuristic_win_rate = ? WHERE id = ?",
+            (win_rate, hof_id),
+        )
+
+    def update_hof_scores(
+        self,
+        hof_id: int,
+        *,
+        internal_score: float,
+        combined_score: float,
+    ) -> None:
+        self.conn.execute(
+            "UPDATE hall_of_fame SET internal_score = ?, combined_score = ? WHERE id = ?",
+            (internal_score, combined_score, hof_id),
+        )
+
+    def evict_hof(self, hof_id: int, evicted_tick: int) -> None:
+        self.conn.execute(
+            "UPDATE hall_of_fame SET status = 'evicted', evicted_tick = ? WHERE id = ?",
+            (evicted_tick, hof_id),
+        )

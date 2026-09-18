@@ -18,12 +18,12 @@ crossover_rate_mutation_std: 0.05
 
 tournament_size: 5
 
-reproduction_interval_min: 8
-reproduction_interval_max: 25
+reproduction_interval_min: 6
+reproduction_interval_max: 30
 
 games_per_pair_per_tick: 2
 
-cull_fraction_range: [0.30, 0.50]
+cull_fraction_range: [0.40, 0.60]
 cull_fraction_beta_a: 1.0
 cull_fraction_beta_b: 1.0
 cull_allow_immature_offspring: true
@@ -33,6 +33,21 @@ benchmark_games_per_opponent: 20
 
 heuristic_games_per_agent_per_tick: 2
 heuristic_survival_alpha: 0.5
-heuristic_fitness_weight: 0.7
+heuristic_bot_level: "tactical"
+heuristic_fitness_weight_max: 0.7
+heuristic_fitness_weight_min: 0.3
+heuristic_weight_adapt_low: 0.60
+heuristic_weight_adapt_high: 0.90
+heuristic_weight_adapt_window: 20
+
+hof_enabled: true
+hof_max_size: 20
+hof_games_per_agent_per_tick: 2
+hof_maintenance_every_n_ticks: 50
+hof_maintenance_heuristic_games: 20
+hof_maintenance_peer_games: 4
+hof_entry_heuristic_threshold: 0.70
+hof_eviction_margin: 0.15
+hof_fitness_weight_max: 0.4
 
 random_seed: 42

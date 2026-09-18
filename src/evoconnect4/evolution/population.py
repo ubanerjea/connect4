@@ -1,7 +1,8 @@
 """Population: the live pool, running one tick (plan Sec4.2).
 
 Wires together the game engine (Phase 1), agents/genome (Phase 2), and
-storage (Phase 3). Senescence (Sec4.7, now Phase 9) is still out of scope.
+storage (Phase 3). Phase 10 adds three-track adaptive fitness, Hall of Fame
+challenges and maintenance.
 """
 
 from __future__ import annotations
@@ -13,17 +14,35 @@ import numpy as np
 from evoconnect4.agent.agent import Agent
 from evoconnect4.agent.genome import Genome, crossover, decode, encode, mutate, random_genome
 from evoconnect4.config import Config
-from evoconnect4.game.bots import heuristic_bot, random_mover
+from evoconnect4.game.bots import get_heuristic_bot, random_mover
 from evoconnect4.game.match import play_match
 from evoconnect4.storage.repository import Repository
 
-_BASELINE_OPPONENTS = ((random_mover, "random"), (heuristic_bot, "heuristic"))
+_BASELINE_OPPONENTS = ((random_mover, "random"),)
 
 
 def reproduction_interval(fitness: float, config: Config) -> float:
     lo, hi = config.reproduction_interval_min, config.reproduction_interval_max
     interval = hi - fitness * (hi - lo)
     return min(max(interval, lo), hi)
+
+
+def _compute_adaptive_betas(
+    rolling_wr: float,
+    *,
+    beta_h_max: float,
+    beta_h_min: float,
+    adapt_low: float,
+    adapt_high: float,
+    hof_weight_max: float,
+    hof_has_members: bool,
+) -> tuple[float, float, float]:
+    denom = adapt_high - adapt_low
+    t = 0.0 if denom <= 0 else max(0.0, min(1.0, (rolling_wr - adapt_low) / denom))
+    beta_h = beta_h_max - t * (beta_h_max - beta_h_min)
+    beta_hof = (t * hof_weight_max) if hof_has_members else 0.0
+    beta_peer = 1.0 - beta_h - beta_hof
+    return beta_peer, beta_h, beta_hof
 
 
 class Population:
@@ -33,6 +52,7 @@ class Population:
         self.rng = rng if rng is not None else np.random.default_rng(config.random_seed)
         self.tick = 0
         self.alive: list[Agent] = []
+        self._hof_agents: list[Agent] = []
 
     def initialize(self) -> None:
         for _ in range(self.config.population_size):
@@ -82,7 +102,34 @@ class Population:
             agent.heuristic_draws = record["heuristic_draws"]
             agent.heuristic_games_played = record["heuristic_games_played"]
             agent.heuristic_survival_credit = record["heuristic_survival_credit"]
+            agent.hof_wins = record.get("hof_wins", 0)
+            agent.hof_draws = record.get("hof_draws", 0)
+            agent.hof_games_played = record.get("hof_games_played", 0)
+            agent.hof_survival_credit = record.get("hof_survival_credit", 0.0)
             population.alive.append(agent)
+
+        # Reconstruct active HoF members as Agent objects ready for per-tick sampling.
+        for hof_record in repo.list_hof_agents(status="active"):
+            agent_record = repo.get_agent(hof_record["agent_id"])
+            if agent_record is None:
+                continue
+            genome = decode(
+                {
+                    "weights": agent_record["nn_weights"],
+                    "hidden_layer_sizes": agent_record["nn_architecture"],
+                    "lifespan": agent_record["lifespan"],
+                    "mutation_rate": agent_record["mutation_rate"],
+                    "crossover_rate": agent_record["crossover_rate"],
+                }
+            )
+            hof_agent = Agent(
+                genome,
+                config.board_columns,
+                config.board_rows,
+                agent_id=agent_record["agent_id"],
+            )
+            hof_agent._hof_record_id = hof_record["id"]
+            population._hof_agents.append(hof_agent)
 
         state = repo.get_simulation_state()
         population.tick = state["current_tick"]
@@ -96,6 +143,8 @@ class Population:
 
         self._run_heuristic_challenges()
 
+        self._run_hof_challenges()
+
         self._recompute_fitness()
 
         for agent in list(self.alive):
@@ -108,6 +157,8 @@ class Population:
                 self._kill(agent, cause="old_age")
 
         self._run_benchmark()
+
+        self._run_hof_maintenance()
 
         self._write_snapshot()
         self.repo.commit()
@@ -219,10 +270,29 @@ class Population:
             heuristic_draws=agent.heuristic_draws,
             heuristic_games_played=agent.heuristic_games_played,
             heuristic_survival_credit=agent.heuristic_survival_credit,
+            hof_wins=agent.hof_wins,
+            hof_draws=agent.hof_draws,
+            hof_games_played=agent.hof_games_played,
+            hof_survival_credit=agent.hof_survival_credit,
         )
 
     def _recompute_fitness(self) -> None:
-        beta = self.config.heuristic_fitness_weight
+        rolling_wr = self.repo.get_rolling_heuristic_win_rate(
+            window=self.config.heuristic_weight_adapt_window
+        )
+        if rolling_wr is None:
+            rolling_wr = 0.0
+
+        beta_peer, beta_h, beta_hof = _compute_adaptive_betas(
+            rolling_wr,
+            beta_h_max=self.config.heuristic_fitness_weight_max,
+            beta_h_min=self.config.heuristic_fitness_weight_min,
+            adapt_low=self.config.heuristic_weight_adapt_low,
+            adapt_high=self.config.heuristic_weight_adapt_high,
+            hof_weight_max=self.config.hof_fitness_weight_max if self.config.hof_enabled else 0.0,
+            hof_has_members=bool(self._hof_agents),
+        )
+
         for agent in self.alive:
             peer_fitness = (
                 (agent.peer_wins + 0.5 * agent.peer_draws) / agent.peer_games_played
@@ -233,7 +303,12 @@ class Population:
                 / agent.heuristic_games_played
                 if agent.heuristic_games_played > 0 else 0.0
             )
-            agent.fitness = (1 - beta) * peer_fitness + beta * heuristic_fitness
+            hof_fitness = (
+                (agent.hof_wins + 0.5 * agent.hof_draws + agent.hof_survival_credit)
+                / agent.hof_games_played
+                if agent.hof_games_played > 0 else 0.0
+            )
+            agent.fitness = beta_peer * peer_fitness + beta_h * heuristic_fitness + beta_hof * hof_fitness
             self._persist_stats(agent)
 
     def _tournament_select(self, exclude: Agent) -> Agent | None:
@@ -309,7 +384,8 @@ class Population:
         if n <= 0 or not self.alive:
             return
 
-        bound_heuristic = functools.partial(heuristic_bot, rng=self.rng)
+        heuristic_fn = get_heuristic_bot(self.config.heuristic_bot_level)
+        bound_heuristic = functools.partial(heuristic_fn, rng=self.rng)
         board_cells = self.config.board_columns * self.config.board_rows
         alpha = self.config.heuristic_survival_alpha
 
@@ -347,6 +423,217 @@ class Population:
                 )
                 self._persist_stats(agent)
 
+    def _run_hof_challenges(self) -> None:
+        if not self.config.hof_enabled:
+            return
+        n = self.config.hof_games_per_agent_per_tick
+        if n <= 0 or not self.alive or not self._hof_agents:
+            return
+
+        board_cells = self.config.board_columns * self.config.board_rows
+        alpha = self.config.heuristic_survival_alpha
+
+        for agent in self.alive:
+            for i in range(n):
+                first_mover = 1 if i % 2 == 0 else -1
+                hof_member = self._hof_agents[int(self.rng.integers(len(self._hof_agents)))]
+                result = play_match(agent.choose_move, hof_member.choose_move, first_mover=first_mover)
+
+                if result.winner == 1:
+                    db_result = "player1_win"
+                    agent.hof_wins += 1
+                    agent.wins += 1
+                elif result.winner == -1:
+                    db_result = "player2_win"
+                    agent.hof_survival_credit += alpha * result.num_moves / board_cells
+                    agent.losses += 1
+                else:
+                    db_result = "draw"
+                    agent.hof_draws += 1
+                    agent.draws += 1
+
+                agent.hof_games_played += 1
+                agent.games_played += 1
+                agent.games_since_last_reproduction += 1
+
+                self.repo.insert_game(
+                    tick=self.tick,
+                    player1_agent_id=agent.agent_id,
+                    player2_agent_id=hof_member.agent_id,
+                    result=db_result,
+                    num_moves=result.num_moves,
+                    move_history=result.move_history,
+                    game_type="hof_challenge",
+                )
+                self._persist_stats(agent)
+
+    def _run_hof_maintenance(self) -> None:
+        if not self.config.hof_enabled:
+            return
+        if self.tick % self.config.hof_maintenance_every_n_ticks != 0:
+            return
+        if not self.alive:
+            return
+
+        heuristic_fn = get_heuristic_bot(self.config.heuristic_bot_level)
+        bound_heuristic = functools.partial(heuristic_fn, rng=self.rng)
+        active_hof_records = self.repo.list_hof_agents(status="active")
+
+        # Step 1: Re-evaluate each existing member vs heuristic bot.
+        for hof_record in active_hof_records:
+            member = self._find_hof_agent(hof_record["id"])
+            if member is None:
+                continue
+            wins = draws = 0
+            n = self.config.hof_maintenance_heuristic_games
+            for i in range(n):
+                first_mover = 1 if i % 2 == 0 else -1
+                result = play_match(member.choose_move, bound_heuristic, first_mover=first_mover)
+                if result.winner == 1:
+                    wins += 1
+                    db_result = "player1_win"
+                elif result.winner == -1:
+                    db_result = "player2_win"
+                else:
+                    draws += 1
+                    db_result = "draw"
+                self.repo.insert_game(
+                    tick=self.tick,
+                    player1_agent_id=member.agent_id,
+                    player2_agent_id=None,
+                    result=db_result,
+                    num_moves=result.num_moves,
+                    move_history=result.move_history,
+                    game_type="hof_maintenance_heuristic",
+                    opponent_label="heuristic",
+                )
+            member_wr = (wins + 0.5 * draws) / n
+            self.repo.update_hof_heuristic_win_rate(hof_record["id"], member_wr)
+            hof_record["heuristic_win_rate"] = member_wr
+
+        # Step 2: Intra-HoF pairing.
+        if len(active_hof_records) >= 2:
+            n_pairs = self.config.hof_maintenance_peer_games
+            indices = list(range(len(active_hof_records)))
+            self.rng.shuffle(indices)
+            win_counts: dict[int, list] = {r["id"]: [0, 0, 0] for r in active_hof_records}  # wins, draws, games
+
+            for idx in range(0, len(indices) - 1, 2):
+                ra = active_hof_records[indices[idx]]
+                rb = active_hof_records[indices[idx + 1]]
+                ma = self._find_hof_agent(ra["id"])
+                mb = self._find_hof_agent(rb["id"])
+                if ma is None or mb is None:
+                    continue
+                for i in range(n_pairs):
+                    first_mover = 1 if i % 2 == 0 else -1
+                    result = play_match(ma.choose_move, mb.choose_move, first_mover=first_mover)
+                    if result.winner == 1:
+                        db_result = "player1_win"
+                        win_counts[ra["id"]][0] += 1
+                    elif result.winner == -1:
+                        db_result = "player2_win"
+                        win_counts[rb["id"]][0] += 1
+                    else:
+                        db_result = "draw"
+                        win_counts[ra["id"]][1] += 1
+                        win_counts[rb["id"]][1] += 1
+                    win_counts[ra["id"]][2] += 1
+                    win_counts[rb["id"]][2] += 1
+                    self.repo.insert_game(
+                        tick=self.tick,
+                        player1_agent_id=ma.agent_id,
+                        player2_agent_id=mb.agent_id,
+                        result=db_result,
+                        num_moves=result.num_moves,
+                        move_history=result.move_history,
+                        game_type="hof_maintenance_peer",
+                    )
+
+            for hof_record in active_hof_records:
+                w, d, g = win_counts[hof_record["id"]]
+                internal = (w + 0.5 * d) / g if g > 0 else 0.0
+                combined = 0.5 * hof_record["heuristic_win_rate"] + 0.5 * internal
+                self.repo.update_hof_scores(hof_record["id"], internal_score=internal, combined_score=combined)
+                hof_record["combined_score"] = combined
+
+        # Step 3: Evaluate candidate (current best-alive by fitness).
+        candidate = max(self.alive, key=lambda a: a.fitness)
+        c_wins = c_draws = 0
+        n = self.config.hof_maintenance_heuristic_games
+        for i in range(n):
+            first_mover = 1 if i % 2 == 0 else -1
+            result = play_match(candidate.choose_move, bound_heuristic, first_mover=first_mover)
+            if result.winner == 1:
+                c_wins += 1
+                db_result = "player1_win"
+            elif result.winner == -1:
+                db_result = "player2_win"
+            else:
+                c_draws += 1
+                db_result = "draw"
+            self.repo.insert_game(
+                tick=self.tick,
+                player1_agent_id=candidate.agent_id,
+                player2_agent_id=None,
+                result=db_result,
+                num_moves=result.num_moves,
+                move_history=result.move_history,
+                game_type="hof_maintenance_heuristic",
+                opponent_label="heuristic",
+            )
+        candidate_wr = (c_wins + 0.5 * c_draws) / n
+
+        # Step 4: Entry / eviction decision.
+        threshold = self.config.hof_entry_heuristic_threshold
+        if candidate_wr < threshold:
+            return
+
+        active_agent_ids = {r["agent_id"] for r in active_hof_records}
+        if candidate.agent_id in active_agent_ids:
+            return
+
+        if len(active_hof_records) < self.config.hof_max_size:
+            hof_id = self.repo.insert_hof(
+                agent_id=candidate.agent_id,
+                inducted_tick=self.tick,
+                heuristic_win_rate=candidate_wr,
+            )
+            self._add_hof_agent(candidate, hof_id)
+        else:
+            weakest = min(active_hof_records, key=lambda r: r.get("combined_score", r["heuristic_win_rate"]))
+            if candidate_wr >= weakest["heuristic_win_rate"] + self.config.hof_eviction_margin:
+                self.repo.evict_hof(weakest["id"], self.tick)
+                self._remove_hof_agent(weakest["id"])
+                hof_id = self.repo.insert_hof(
+                    agent_id=candidate.agent_id,
+                    inducted_tick=self.tick,
+                    heuristic_win_rate=candidate_wr,
+                )
+                self._add_hof_agent(candidate, hof_id)
+
+    def _find_hof_agent(self, hof_record_id: int) -> Agent | None:
+        for a in self._hof_agents:
+            if getattr(a, "_hof_record_id", None) == hof_record_id:
+                return a
+        return None
+
+    def _add_hof_agent(self, source_agent: Agent, hof_record_id: int) -> None:
+        """Add an Agent object to the in-memory HoF list (genome copied from source)."""
+        hof_agent = Agent(
+            source_agent.genome,
+            self.config.board_columns,
+            self.config.board_rows,
+            agent_id=source_agent.agent_id,
+        )
+        hof_agent._hof_record_id = hof_record_id
+        self._hof_agents.append(hof_agent)
+
+    def _remove_hof_agent(self, hof_record_id: int) -> None:
+        self._hof_agents = [
+            a for a in self._hof_agents if getattr(a, "_hof_record_id", None) != hof_record_id
+        ]
+
     def _run_benchmark(self) -> None:
         if self.tick % self.config.benchmark_every_n_ticks != 0:
             return
@@ -355,7 +642,11 @@ class Population:
 
         best = max(self.alive, key=lambda a: a.fitness)
 
-        for bot_fn, opponent_type in _BASELINE_OPPONENTS:
+        all_opponents = list(_BASELINE_OPPONENTS) + [(
+            get_heuristic_bot(self.config.heuristic_bot_level), "heuristic"
+        )]
+
+        for bot_fn, opponent_type in all_opponents:
             bound_bot = functools.partial(bot_fn, rng=self.rng)
             wins = losses = draws = 0
 

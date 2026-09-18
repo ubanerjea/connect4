@@ -33,7 +33,22 @@ CREATE TABLE IF NOT EXISTS agents (
     heuristic_wins INTEGER NOT NULL DEFAULT 0,
     heuristic_draws INTEGER NOT NULL DEFAULT 0,
     heuristic_games_played INTEGER NOT NULL DEFAULT 0,
-    heuristic_survival_credit REAL NOT NULL DEFAULT 0.0
+    heuristic_survival_credit REAL NOT NULL DEFAULT 0.0,
+    hof_wins INTEGER NOT NULL DEFAULT 0,
+    hof_draws INTEGER NOT NULL DEFAULT 0,
+    hof_games_played INTEGER NOT NULL DEFAULT 0,
+    hof_survival_credit REAL NOT NULL DEFAULT 0.0
+);
+
+CREATE TABLE IF NOT EXISTS hall_of_fame (
+    id INTEGER PRIMARY KEY,
+    agent_id INTEGER NOT NULL REFERENCES agents(agent_id),
+    inducted_tick INTEGER NOT NULL,
+    evicted_tick INTEGER,
+    status TEXT NOT NULL DEFAULT 'active',
+    heuristic_win_rate REAL NOT NULL DEFAULT 0.0,
+    internal_score REAL NOT NULL DEFAULT 0.0,
+    combined_score REAL NOT NULL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS games (
@@ -130,12 +145,31 @@ _AGENT_MIGRATIONS = [
     "ALTER TABLE agents ADD COLUMN heuristic_draws INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE agents ADD COLUMN heuristic_games_played INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE agents ADD COLUMN heuristic_survival_credit REAL NOT NULL DEFAULT 0.0",
+    "ALTER TABLE agents ADD COLUMN hof_wins INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN hof_draws INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN hof_games_played INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN hof_survival_credit REAL NOT NULL DEFAULT 0.0",
 ]
 
 _HISTORY_MIGRATIONS = [
     "ALTER TABLE simulation_config_history ADD COLUMN heuristic_games_per_agent_per_tick INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE simulation_config_history ADD COLUMN heuristic_survival_alpha REAL NOT NULL DEFAULT 0.5",
     "ALTER TABLE simulation_config_history ADD COLUMN heuristic_fitness_weight REAL NOT NULL DEFAULT 0.7",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_bot_level TEXT NOT NULL DEFAULT 'tactical'",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_fitness_weight_max REAL NOT NULL DEFAULT 0.7",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_fitness_weight_min REAL NOT NULL DEFAULT 0.3",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_weight_adapt_low REAL NOT NULL DEFAULT 0.60",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_weight_adapt_high REAL NOT NULL DEFAULT 0.90",
+    "ALTER TABLE simulation_config_history ADD COLUMN heuristic_weight_adapt_window INTEGER NOT NULL DEFAULT 20",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_enabled INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_max_size INTEGER NOT NULL DEFAULT 20",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_games_per_agent_per_tick INTEGER NOT NULL DEFAULT 2",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_maintenance_every_n_ticks INTEGER NOT NULL DEFAULT 50",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_maintenance_heuristic_games INTEGER NOT NULL DEFAULT 20",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_maintenance_peer_games INTEGER NOT NULL DEFAULT 4",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_entry_heuristic_threshold REAL NOT NULL DEFAULT 0.70",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_eviction_margin REAL NOT NULL DEFAULT 0.15",
+    "ALTER TABLE simulation_config_history ADD COLUMN hof_fitness_weight_max REAL NOT NULL DEFAULT 0.4",
 ]
 
 

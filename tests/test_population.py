@@ -134,7 +134,10 @@ def test_fitness_recomputed_matches_formula():
 
     pop.run_tick()
 
-    beta = config.heuristic_fitness_weight
+    # With no benchmark history yet, rolling_wr=0.0, hof empty:
+    # beta_h = heuristic_fitness_weight_max, beta_hof = 0, beta_peer = 1 - beta_h
+    beta_h = config.heuristic_fitness_weight_max
+    beta_peer = 1.0 - beta_h
     for agent in pop.alive:
         peer_fit = (
             (agent.peer_wins + 0.5 * agent.peer_draws) / agent.peer_games_played
@@ -145,7 +148,7 @@ def test_fitness_recomputed_matches_formula():
             / agent.heuristic_games_played
             if agent.heuristic_games_played > 0 else 0.0
         )
-        expected = (1 - beta) * peer_fit + beta * h_fit
+        expected = beta_peer * peer_fit + beta_h * h_fit
         assert np.isclose(agent.fitness, expected)
         record = repo.get_agent(agent.agent_id)
         assert np.isclose(record["fitness"], expected)
@@ -168,7 +171,7 @@ def test_reproduction_interval_shorter_for_higher_fitness():
 
 
 def test_reproduce_clone_path_produces_single_parent_child():
-    config = _test_config(population_size=3)
+    config = _test_config(population_size=3, cull_allow_immature_offspring=False)
     repo = Repository(":memory:")
     pop = Population(config, repo, rng=np.random.default_rng(6))
     pop.initialize()
@@ -670,7 +673,7 @@ def test_benchmark_games_do_not_affect_agent_official_record():
 
 
 def test_two_track_fitness():
-    config = _test_config(population_size=2, heuristic_fitness_weight=0.7)
+    config = _test_config(population_size=2, heuristic_fitness_weight_max=0.7)
     repo = Repository(":memory:")
     pop = Population(config, repo, rng=np.random.default_rng(40))
     pop.initialize()
@@ -695,7 +698,7 @@ def test_two_track_fitness():
 
 
 def test_two_track_fitness_zero_peer_games():
-    config = _test_config(population_size=2, heuristic_fitness_weight=0.7)
+    config = _test_config(population_size=2, heuristic_fitness_weight_max=0.7)
     repo = Repository(":memory:")
     pop = Population(config, repo, rng=np.random.default_rng(41))
     pop.initialize()
@@ -797,7 +800,7 @@ def test_heuristic_disable_no_side_effects():
         assert agent.heuristic_wins == 0
         assert agent.heuristic_draws == 0
         assert agent.heuristic_survival_credit == 0.0
-        beta = config.heuristic_fitness_weight
+        beta = config.heuristic_fitness_weight_max
         peer_fit = (
             (agent.peer_wins + 0.5 * agent.peer_draws) / agent.peer_games_played
             if agent.peer_games_played > 0 else 0.0
@@ -861,3 +864,159 @@ def test_benchmark_skips_cleanly_on_empty_population():
     pop._run_benchmark()  # should not raise
 
     assert repo.list_benchmark_results() == []
+
+
+# -- HoF maintenance ----------------------------------------------------------
+
+
+def _hof_config(**overrides):
+    defaults = dict(
+        population_size=3,
+        hof_enabled=True,
+        hof_maintenance_every_n_ticks=1,
+        hof_entry_heuristic_threshold=0.70,
+        hof_maintenance_heuristic_games=2,
+        hof_maintenance_peer_games=0,
+        hof_eviction_margin=0.15,
+        hof_max_size=5,
+        hof_games_per_agent_per_tick=0,
+        benchmark_every_n_ticks=100,
+    )
+    defaults.update(overrides)
+    return _test_config(**defaults)
+
+
+def test_hof_maintenance_entry_path():
+    """Empty HoF + candidate win rate >= threshold -> inducted."""
+    import evoconnect4.evolution.population as pop_module
+
+    config = _hof_config()
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(70))
+    pop.initialize()
+    pop.alive[0].fitness = 1.0
+    pop.tick = 1
+
+    original = pop_module.play_match
+    pop_module.play_match = lambda c1, c2, *, first_mover: MatchResult(winner=1, move_history=[0] * 7)
+    try:
+        pop._run_hof_maintenance()
+    finally:
+        pop_module.play_match = original
+
+    active = repo.list_hof_agents(status="active")
+    assert len(active) == 1
+    assert active[0]["agent_id"] == pop.alive[0].agent_id
+    assert len(pop._hof_agents) == 1
+
+
+def test_hof_maintenance_eviction_path():
+    """Full HoF + candidate exceeds weakest by margin -> evict weakest, induct candidate."""
+    import evoconnect4.evolution.population as pop_module
+
+    config = _hof_config(hof_max_size=1)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(71))
+    pop.initialize()
+    pop.alive[0].fitness = 0.8
+    pop.alive[1].fitness = 0.2
+    pop.tick = 1
+
+    # Pre-insert alive[1] as an existing HoF member with low win rate.
+    hof_id = repo.insert_hof(agent_id=pop.alive[1].agent_id, inducted_tick=0, heuristic_win_rate=0.5)
+    pop._add_hof_agent(pop.alive[1], hof_id)
+
+    # First 2 calls: member re-eval (alive[1] loses all) -> wr=0.0.
+    # Next 2 calls: candidate eval (alive[0] wins all) -> wr=1.0. 1.0 >= 0.0+0.15 -> evict.
+    call_count = [0]
+    def mock_match(c1, c2, *, first_mover):
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            return MatchResult(winner=-1, move_history=[0] * 7)
+        return MatchResult(winner=1, move_history=[0] * 7)
+
+    original = pop_module.play_match
+    pop_module.play_match = mock_match
+    try:
+        pop._run_hof_maintenance()
+    finally:
+        pop_module.play_match = original
+
+    evicted = repo.list_hof_agents(status="evicted")
+    active = repo.list_hof_agents(status="active")
+    assert len(evicted) == 1
+    assert evicted[0]["agent_id"] == pop.alive[1].agent_id
+    assert len(active) == 1
+    assert active[0]["agent_id"] == pop.alive[0].agent_id
+    assert len(pop._hof_agents) == 1
+    assert pop._hof_agents[0].agent_id == pop.alive[0].agent_id
+
+
+def test_hof_maintenance_no_change_path():
+    """Full HoF + candidate does not exceed weakest by margin -> no change."""
+    import evoconnect4.evolution.population as pop_module
+
+    config = _hof_config(hof_max_size=1)
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(72))
+    pop.initialize()
+    pop.alive[0].fitness = 0.8
+    pop.alive[1].fitness = 0.2
+    pop.tick = 1
+
+    # Pre-insert alive[1] as an existing HoF member.
+    hof_id = repo.insert_hof(agent_id=pop.alive[1].agent_id, inducted_tick=0, heuristic_win_rate=0.5)
+    pop._add_hof_agent(pop.alive[1], hof_id)
+
+    # First 2 calls: member re-eval wins all -> wr=1.0.
+    # Next 2 calls: candidate gets 1 win + 1 draw -> wr=0.75. 0.75 < 1.0+0.15 -> no eviction.
+    call_count = [0]
+    def mock_match(c1, c2, *, first_mover):
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            return MatchResult(winner=1, move_history=[0] * 7)   # member wins
+        if call_count[0] == 3:
+            return MatchResult(winner=1, move_history=[0] * 7)   # candidate win
+        return MatchResult(winner=None, move_history=[0] * 7)    # candidate draw
+
+    original = pop_module.play_match
+    pop_module.play_match = mock_match
+    try:
+        pop._run_hof_maintenance()
+    finally:
+        pop_module.play_match = original
+
+    active = repo.list_hof_agents(status="active")
+    evicted = repo.list_hof_agents(status="evicted")
+    assert len(active) == 1
+    assert active[0]["agent_id"] == pop.alive[1].agent_id
+    assert len(evicted) == 0
+    assert len(pop._hof_agents) == 1
+
+
+def test_hof_maintenance_no_duplicate_induction():
+    """Best-alive agent already in HoF -> not inducted again."""
+    import evoconnect4.evolution.population as pop_module
+
+    config = _hof_config()
+    repo = Repository(":memory:")
+    pop = Population(config, repo, rng=np.random.default_rng(73))
+    pop.initialize()
+    pop.alive[0].fitness = 1.0
+    pop.tick = 1
+
+    # Pre-insert alive[0] (best alive) into HoF already.
+    hof_id = repo.insert_hof(agent_id=pop.alive[0].agent_id, inducted_tick=0, heuristic_win_rate=0.8)
+    pop._add_hof_agent(pop.alive[0], hof_id)
+
+    original = pop_module.play_match
+    pop_module.play_match = lambda c1, c2, *, first_mover: MatchResult(winner=1, move_history=[0] * 7)
+    try:
+        pop._run_hof_maintenance()
+    finally:
+        pop_module.play_match = original
+
+    active = repo.list_hof_agents(status="active")
+    assert len(active) == 1
+    assert active[0]["agent_id"] == pop.alive[0].agent_id
+    assert len(pop._hof_agents) == 1

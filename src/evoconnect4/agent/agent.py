@@ -56,6 +56,10 @@ class Agent:
         self.heuristic_draws = 0
         self.heuristic_games_played = 0
         self.heuristic_survival_credit = 0.0
+        self.hof_wins = 0
+        self.hof_draws = 0
+        self.hof_games_played = 0
+        self.hof_survival_credit = 0.0
 
     def choose_move(self, board: Board) -> int:
         x = self._encode(board)
